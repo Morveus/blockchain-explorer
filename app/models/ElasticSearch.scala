@@ -21,4 +21,13 @@ object ElasticSearch {
     }
   }
 
+  def getBeforeLastBlockHash(esIndex:String, esType:String) = {
+    val query = Json.obj("sort" -> Json.arr(Json.obj("height" -> Json.obj("order" -> "desc"))),
+                         "from" -> 1, "size" -> 1,
+                         "fields" -> Json.arr("hash"))
+    WS.url(elasticSearchUrl+"/"+esIndex+"/"+esType+"/_search").post(query).map { response =>
+      ((Json.parse(response.body) \ "hits" \ "hits")(0) \ "fields" \ "hash")(0).asOpt[String]
+    }
+  }
+
 }

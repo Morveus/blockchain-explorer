@@ -165,8 +165,12 @@ object BlockchainParser {
 
   def resume(ticker:String) = {
     //on reprend la suite de l'indexation à partir de l'avant dernier block stocké (si le dernier n'a pas été ajouté correctement) dans notre bdd
-    val beforeLastBlockHash = config.getString("coins."+ticker+".genesisBlock").get   /* TODO : récupérer l'avant dernier dans ES */
-    this.start(ticker, beforeLastBlockHash)
+    ElasticSearch.getBeforeLastBlockHash(ticker, "block").map { beforeLastBlockHash =>
+      beforeLastBlockHash match {
+        case Some(b) => this.start(ticker, b)
+        case None => Logger.error("No blocks found, can't resume")
+      }
+    }
   }
 
   def restart(ticker:String) = {
