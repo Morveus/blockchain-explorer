@@ -1,6 +1,7 @@
 # See http://www.playframework.com/documentation/latest/ApplicationSecret for more details.
 application.secret="xxxxxxxxxxxxxxxxxxx"
 
+elasticsearch.url="http://xxx.xxx.xxx.xxx:xxxx"
 
 # Coins
 coins={

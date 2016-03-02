@@ -10,11 +10,8 @@ import models._
 
 object Application extends Controller {
 
-  def index = Action.async {
-    
-    BlockchainParser.resume("ltc").map{ result =>
-      Ok(result)
-    }
-
+  def index = Action {
+    BlockchainParser.resume("ltc")
+    Ok("Indexation en cours...")
   }
 }
