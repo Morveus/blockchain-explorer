@@ -11,7 +11,7 @@ import models._
 object Application extends Controller {
 
   def index = Action {
-    BlockchainParser.resume("ltc")
+    BlockchainParser.restart("ltc")
     Ok("Indexation en cours...")
   }
 }
