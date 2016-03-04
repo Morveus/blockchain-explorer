@@ -37,13 +37,9 @@ object ElasticSearch {
     }
   }
 
-  def getOutputFromTransaction(esIndex:String, txHash:String, output_index:Long) = {
-    /*
-      TODO:
-      récupérer directement l'output que l'on recherche via ES plutôt que de récupérer toute la tx
-    */
-    val query = Json.obj("query" -> Json.obj("match" -> Json.obj("txid" -> txHash)))
-    WS.url(elasticSearchUrl+"/"+esIndex+"/block/_search").post(query).map { response =>
+  def getTransactionFromInput(esIndex:String, txHash:String) = {
+    val query = Json.obj("query" -> Json.obj("match" -> Json.obj("hash" -> txHash)))
+    WS.url(elasticSearchUrl+"/"+esIndex+"/transaction/_search").post(query).map { response =>
       ((Json.parse(response.body) \ "hits" \ "hits")(0) \ "_source")
     }
   }

@@ -64,9 +64,9 @@ case class ESTransaction(
 )
 
 case class ESTransactionBlock(
-  hash: String,
-  height: Long,
-  time: Long
+  hash: Option[String],
+  height: Option[Long],
+  time: Option[Long]
 )
 
 case class ESTransactionVIn(
@@ -83,5 +83,5 @@ case class ESTransactionVOut(
   output_index: Long,
   script_hex: String,
   addresses: List[String],
-  spent_by: String
+  spent_by: Option[String]
 )

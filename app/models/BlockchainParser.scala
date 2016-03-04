@@ -10,6 +10,7 @@ import play.api.libs.functional.syntax._
 
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
+import scala.collection.mutable.{ListBuffer, Map}
 
 import com.ning.http.client.Realm.AuthScheme
 
@@ -36,8 +37,22 @@ object BlockchainParser {
   implicit val esTransactionBlockWrites = Json.writes[ESTransactionBlock ]
   implicit val esTransactionVInReads    = Json.reads[ESTransactionVIn]
   implicit val esTransactionVInWrites   = Json.writes[ESTransactionVIn]
-  implicit val esTransactionVOutReads   = Json.reads[ESTransactionVOut]
-  implicit val esTransactionVOutWrites  = Json.writes[ESTransactionVOut]
+  //implicit val esTransactionVOutReads   = Json.reads[ESTransactionVOut]
+  implicit val esTransactionVOutReads : Reads[ESTransactionVOut] = (
+    (JsPath \ "value").read[Long] and
+    (JsPath \ "output_index").read[Long] and
+    (JsPath \ "script_hex").read[String] and
+    (JsPath \ "addresses").read[List[String]] and
+    (JsPath \ "spent_by").readNullable[String]
+  )(ESTransactionVOut.apply _)
+  //implicit val esTransactionVOutWrites  = Json.writes[ESTransactionVOut]
+  implicit val esTransactionVOutWrites : Writes[ESTransactionVOut] = (
+    (JsPath \ "value").write[Long] and
+    (JsPath \ "output_index").write[Long] and
+    (JsPath \ "script_hex").write[String] and
+    (JsPath \ "addresses").write[List[String]] and
+    (JsPath \ "spent_by").writeNullable[String]
+  )(unlift(ESTransactionVOut.unapply))
   implicit val esTransactionReads       = Json.reads[ESTransaction]
   implicit val esTransactionWrites      = Json.writes[ESTransaction]
 
@@ -91,7 +106,11 @@ object BlockchainParser {
 
                 this.exploreTransactions(ticker, block).map { response =>
                   block.nextblockhash match {
-                    case Some(nextblockhash) => getBlock(ticker, nextblockhash)
+                    case Some(nextblockhash) => {
+                      //if(nextblockhash != "48c132576da34a4838038149a37c48cee069cfc044405a472e17726d2cc866c4"){  /* TODO : à supprimer après les test */
+                        getBlock(ticker, nextblockhash)
+                      //} 
+                    }
                     case None => Logger.debug("Blocks synchronized !")
                   }
                 }
@@ -112,14 +131,14 @@ object BlockchainParser {
   }
 
   private def exploreTransactions(ticker:String, block:Block, currentTx: Int = 0):Future[Unit] = {
-    this.getTransaction(ticker, block.tx(currentTx)).map { response =>
+    this.getTransaction(ticker, block.tx(currentTx), Some(block)).map { response =>
       if(currentTx + 1 < block.tx.size){
         exploreTransactions(ticker, block, currentTx + 1)
       }
     }
   }
 
-  private def getTransaction(ticker:String, txHash:String):Future[Unit] = {
+  private def getTransaction(ticker:String, txHash:String, block:Option[Block] = None):Future[Unit] = {
     if(txHash == "97ddfbbae6be97fd6cdf3e7ca13232a3afff2353e29badfab7f73011edd4ced9"){
       /* Block genesis */
       Future.successful("")
@@ -138,7 +157,7 @@ object BlockchainParser {
                                               "method" -> "decoderawtransaction",
                                               "params" -> Json.arr(raw.get))
             WS.url(url).withAuth(user, pass, WSAuthScheme.BASIC).post(rpcRequestDecoded).map { response =>
-              println(response.body)
+              //println(response.body)
               val rpcResult = Json.parse(response.body)
               (rpcResult \ "result") match {
                 case JsNull => Logger.warn("Transaction '"+txHash+"' not found")
@@ -151,8 +170,7 @@ object BlockchainParser {
                         TODO:
                         vérifier que lorsqu'on n'est pas dans le cas d'une transaction coinbase, les données des inputs soient bien tous renseignés
                       */
-
-                      this.indexTransaction(ticker, tx).map{ response =>
+                      this.indexTransaction(ticker, tx, block).map{ response =>
                         Logger.debug("Transaction '"+tx.txid+"' added !")
                       }
                     }
@@ -172,33 +190,76 @@ object BlockchainParser {
     }
   }
 
-  private def indexTransaction(ticker:String, tx:Transaction) = {
+  private def indexTransaction(ticker:String, tx:Transaction, block:Option[Block] = None) = {
     //on récupère les informations qui nous manquent concernant la transaction
+    var resultsFuts: ListBuffer[Future[Unit]] = ListBuffer()
 
+    var jsBlock: JsValue = Json.obj()
     var inputs: Map[Int, JsValue] = Map()
+    var outputs: Map[Int, JsValue] = Map()
+    block match {
+      case Some(b) => {
+        jsBlock = Json.obj(
+          "hash" -> b.hash,
+          "height" -> b.height,
+          "time" -> b.time
+        )
+      }
+      case None => {
+        resultsFuts += ElasticSearch.getBlockFromTxHash(ticker, tx.txid).map { result => 
+          println(result)
+          result.validate[Block] match {
+            case b: JsSuccess[Block] => {
+              jsBlock = Json.obj(
+                "hash" -> b.get.hash,
+                "height" -> b.get.height,
+                "time" -> b.get.time
+              )
+            }
+            case e: JsError => Logger.error("Invalid result from ElasticSearch.getBlockFromTxHash (txid : "+tx.txid+") "+e)
+          }
+        }
+      }
+    }
     for((vin, i) <- tx.vin.zipWithIndex){
-      val input = vin.coinbase match {
+      vin.coinbase match {
         case Some(c) => {
           //generation transaction
-          Future.successful(
-            Json.obj(
-              "coinbase" -> c,
-              "input_index" -> i
-            )
+          inputs(i) = Json.obj(
+            "coinbase" -> c,
+            "input_index" -> i
           )
         }
         case None => {
           //standard transaction
-          ElasticSearch.getOutputFromTransaction(ticker, vin.txid.get, vin.vout.get).map { result => 
+          resultsFuts += ElasticSearch.getTransactionFromInput(ticker, vin.txid.get).map { result => 
             result.validate[ESTransaction] match {
-              case esTx: JsSuccess[ESTransaction] => {
-                val output = esTx.get.outputs(vin.vout.get.toInt) /* TODO: A modifier quand ElasticSearch.getOutputFromTransaction retournera directement l'output */
+              case t: JsSuccess[ESTransaction] => {
+                var inputTx = t.get
 
                 //On passe l'output en spent
-                /* TODO URGENT */
+                //inputTx.outputs(vin.vout.get.toInt).spent_by = tx.txid
+                var updatedInputTx = Json.toJson(inputTx)
+                //updatedInputTx.set( ((__ \ "outputs")(vin.vout.get.toInt) \ "script_hex") -> JsString(tx.txid) )
 
+                //updatedInputTx = (updatedInputTx / "outputs")(vin.vout.get.toInt).as[JsObject] ++
 
-                Json.obj(
+                /*
+                  TODO:
+                  Modifier le 'spent_by'
+                */
+
+                ElasticSearch.set(ticker, "transaction", inputTx.hash, Json.toJson(updatedInputTx)).map { response =>
+                  Logger.debug("transaction output '"+inputTx.hash+"' spent")
+                  Logger.debug("before")
+                  Logger.warn(Json.toJson(inputTx).toString)
+                  Logger.debug("after")
+                  Logger.warn(updatedInputTx.toString)
+                }
+
+                val output = inputTx.outputs(vin.vout.get.toInt)
+
+                inputs(i) = Json.obj(
                   "output_hash" -> vin.txid.get,
                   "output_index" -> vin.vout.get,
                   "input_index" -> i,
@@ -206,66 +267,87 @@ object BlockchainParser {
                   "addresses" -> output.addresses
                 )
               }
-              case e: JsError => Logger.warn("Invalid result from ElasticSearch")
+              case e: JsError => {
+                Logger.error("Invalid result from ElasticSearch.getTransactionFromInput (txid: "+tx.txid+", inputtxid: "+vin.txid.get+") "+e)
+                Logger.error(result.toString)
+                /* TODO : Exception */
+              }
             }
           }
         }
       }
-      
-      input.map { result =>
-        //On ajoute l'input dans le tableau d'inputs
-        inputs(i) = result  /* TODO URGENT: vérifier que i est à la bonne valeur, sinon il faudra le passer dans le résultat de input */
-      }
     }
-
-    var outputs: Map[Int, JsValue] = Map()
     for(vout <- tx.vout){
-      val output = Json.obj(
+      var output = Json.obj(
         "value" -> vout.value,
         "output_index" -> vout.n,
         "script_hex" -> vout.scriptPubKey.hex,
         "addresses" -> vout.scriptPubKey.addresses,
-        "spent_by" -> null
+        "spent_by" -> JsNull
       )
-      outputs(vout.n) = output
+      outputs(vout.n.toInt) = output
     }
+    
 
+    /*
+      TODO:
+      A factoriser:
+    */
+    if(resultsFuts.size > 0) {
+      val futuresResponses: Future[ListBuffer[Unit]] = Future.sequence(resultsFuts)
+      futuresResponses.map { responses =>
+        var fees = 0  //TODO
+        var amount = 0  //TODO
 
-    ElasticSearch.getBlockFromTxHash(ticker, tx.txid).map { result => 
-      result.validate[Block] match {
-        case b: JsSuccess[Block] => {
-          val block = b.get
-          Json.obj(
-            "hash" -> block.hash,
-            "height" -> block.height,
-            "time" -> block.time
-          )
+        var inputsJs:JsArray = new JsArray
+        for((inIndex, input) <- inputs.toSeq.sortBy(_._1)){
+          inputsJs = inputsJs ++ Json.arr(Json.toJson(input))
         }
-        case e: JsError => Logger.warn("Invalid result from ElasticSearch")
+        var outputsJs:JsArray = new JsArray
+        for((outIndex, output) <- outputs.toSeq.sortBy(_._1)){
+          outputsJs = outputsJs ++ Json.arr(Json.toJson(output))
+        }
+
+        var esTx = Json.obj(
+          "hash" -> tx.txid,
+          "lock_time" -> tx.locktime,
+          "block" -> jsBlock,
+          "inputs" -> inputsJs,
+          "outputs" -> outputsJs,
+          "fees" -> fees,
+          "amount" -> amount)
+
+        ElasticSearch.set(ticker, "transaction", tx.txid, Json.toJson(esTx)).map { response =>
+          //println(response)
+        }
+      }
+    }else{
+
+      var fees = 0  //TODO
+      var amount = 0  //TODO
+
+      var inputsJs:JsArray = new JsArray
+      for((inIndex, input) <- inputs.toSeq.sortBy(_._1)){
+        inputsJs = inputsJs ++ Json.arr(Json.toJson(input))
+      }
+      var outputsJs:JsArray = new JsArray
+      for((outIndex, output) <- outputs.toSeq.sortBy(_._1)){
+        outputsJs = outputsJs ++ Json.arr(Json.toJson(output))
+      }
+
+      var esTx = Json.obj(
+        "hash" -> tx.txid,
+        "lock_time" -> tx.locktime,
+        "block" -> jsBlock,
+        "inputs" -> inputsJs,
+        "outputs" -> outputsJs,
+        "fees" -> fees,
+        "amount" -> amount)
+
+      ElasticSearch.set(ticker, "transaction", tx.txid, Json.toJson(esTx)).map { response =>
+        //println(response)
       }
     }
-
-
-    /*
-      TODO URGENT:
-      Attendre que les futures soient terminées pour récupérer les données, les ajouter au Json et l'envoyer sur ES
-    */
-
-    /*
-
-    var esTx = Json.obj(
-      "hash" -> tx.txid,
-      "lock_time" -> tx.locktime,
-      "block" -> block,
-      "inputs" -> inputs,
-      "outputs" -> outputs,
-      "fees" -> fees,
-      "amount" -> amount)
-
-    ElasticSearch.set(ticker, "transaction", tx.txid, Json.toJson(tx)).map { response =>
-      println(response)
-    }
-    */
   }
 
   private def start(ticker:String, fromBlockHash:String) = {
@@ -291,10 +373,6 @@ object BlockchainParser {
     //on recommence l'indexation à partir du block genesis
     val genesisBlock = config.getString("coins."+ticker+".genesisBlock").get
     this.start(ticker, genesisBlock)
-  }
-
-  def tempTest() = {
-    this.getTransaction("ltc", "ffff5c1145bcf43d33900d63cecfc75cf428c1713212444fcf16b9ebabc95419")
   }
 
 }

@@ -8,14 +8,12 @@ import scala.concurrent.ExecutionContext.Implicits.global
 
 import models._
 
+
 object Application extends Controller {
 
   def index = Action {
-    //BlockchainParser.restart("ltc")
+    BlockchainParser.restart("ltc")
     //BlockchainParser.resume("ltc")
-
-    BlockchainParser.tempTest
-
     Ok("Indexation en cours...")
   }
 }
