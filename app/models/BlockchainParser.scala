@@ -67,6 +67,10 @@ object BlockchainParser {
     }
   }
 
+  private def satoshi(btc:BigDecimal) = {
+    btc * 100000000
+  }
+
   private def getBlock(ticker:String, blockHash:String):Unit = {
 
     /*
@@ -107,7 +111,7 @@ object BlockchainParser {
                 this.exploreTransactions(ticker, block).map { response =>
                   block.nextblockhash match {
                     case Some(nextblockhash) => {
-                      //if(nextblockhash != "48c132576da34a4838038149a37c48cee069cfc044405a472e17726d2cc866c4"){  /* TODO : à supprimer après les test */
+                      //if(nextblockhash != "3ec54cd17449d3f52fb0c3031abc06aa56736427edf117e7513ba6a4355d0b50"){  /* TODO : à supprimer après les test */
                         getBlock(ticker, nextblockhash)
                       //} 
                     }
@@ -232,23 +236,18 @@ object BlockchainParser {
         }
         case None => {
           //standard transaction
-          resultsFuts += ElasticSearch.getTransactionFromInput(ticker, vin.txid.get).map { result => 
+          resultsFuts += ElasticSearch.getTransaction(ticker, vin.txid.get).map { result => 
             result.validate[ESTransaction] match {
               case t: JsSuccess[ESTransaction] => {
                 var inputTx = t.get
 
                 //On passe l'output en spent
-                //inputTx.outputs(vin.vout.get.toInt).spent_by = tx.txid
-                var updatedInputTx = Json.toJson(inputTx)
-                //updatedInputTx.set( ((__ \ "outputs")(vin.vout.get.toInt) \ "script_hex") -> JsString(tx.txid) )
-
-                //updatedInputTx = (updatedInputTx / "outputs")(vin.vout.get.toInt).as[JsObject] ++
-
-                /*
-                  TODO:
-                  Modifier le 'spent_by'
-                */
-
+                val jsonTransformer = (__ \ 'outputs).json.update( 
+                    __.read[JsArray].map { a => 
+                      JsArray(a.value.updated(0, a(0).as[JsObject] ++ Json.obj("spent_by" -> tx.txid)))
+                    }
+                  )
+                var updatedInputTx = Json.toJson(inputTx).transform(jsonTransformer).get
                 ElasticSearch.set(ticker, "transaction", inputTx.hash, Json.toJson(updatedInputTx)).map { response =>
                   Logger.debug("transaction output '"+inputTx.hash+"' spent")
                   Logger.debug("before")
@@ -279,7 +278,7 @@ object BlockchainParser {
     }
     for(vout <- tx.vout){
       var output = Json.obj(
-        "value" -> vout.value,
+        "value" -> satoshi(vout.value),
         "output_index" -> vout.n,
         "script_hex" -> vout.scriptPubKey.hex,
         "addresses" -> vout.scriptPubKey.addresses,
@@ -289,51 +288,32 @@ object BlockchainParser {
     }
     
 
-    /*
-      TODO:
-      A factoriser:
-    */
-    if(resultsFuts.size > 0) {
-      val futuresResponses: Future[ListBuffer[Unit]] = Future.sequence(resultsFuts)
-      futuresResponses.map { responses =>
-        var fees = 0  //TODO
-        var amount = 0  //TODO
-
-        var inputsJs:JsArray = new JsArray
-        for((inIndex, input) <- inputs.toSeq.sortBy(_._1)){
-          inputsJs = inputsJs ++ Json.arr(Json.toJson(input))
-        }
-        var outputsJs:JsArray = new JsArray
-        for((outIndex, output) <- outputs.toSeq.sortBy(_._1)){
-          outputsJs = outputsJs ++ Json.arr(Json.toJson(output))
-        }
-
-        var esTx = Json.obj(
-          "hash" -> tx.txid,
-          "lock_time" -> tx.locktime,
-          "block" -> jsBlock,
-          "inputs" -> inputsJs,
-          "outputs" -> outputsJs,
-          "fees" -> fees,
-          "amount" -> amount)
-
-        ElasticSearch.set(ticker, "transaction", tx.txid, Json.toJson(esTx)).map { response =>
-          //println(response)
-        }
-      }
-    }else{
-
-      var fees = 0  //TODO
-      var amount = 0  //TODO
+    def finalizeTransaction = {
+      var inValues: Long = 0
+      var outValues: Long = 0
 
       var inputsJs:JsArray = new JsArray
       for((inIndex, input) <- inputs.toSeq.sortBy(_._1)){
         inputsJs = inputsJs ++ Json.arr(Json.toJson(input))
+        (input \ "value").asOpt[Long] match {
+          case Some(v) => inValues += v 
+          case None => //coinbase
+        }
       }
       var outputsJs:JsArray = new JsArray
       for((outIndex, output) <- outputs.toSeq.sortBy(_._1)){
         outputsJs = outputsJs ++ Json.arr(Json.toJson(output))
+        (output \ "value").asOpt[Long] match {
+          case Some(v) => outValues += v 
+          case None => //coinbase
+        }
       }
+
+      var fees:Long = 0
+      if(inValues > 0){
+        fees = inValues - outValues
+      }
+      var amount = outValues
 
       var esTx = Json.obj(
         "hash" -> tx.txid,
@@ -347,6 +327,16 @@ object BlockchainParser {
       ElasticSearch.set(ticker, "transaction", tx.txid, Json.toJson(esTx)).map { response =>
         //println(response)
       }
+    }
+
+
+    if(resultsFuts.size > 0) {
+      val futuresResponses: Future[ListBuffer[Unit]] = Future.sequence(resultsFuts)
+      futuresResponses.map { responses =>
+        finalizeTransaction
+      }
+    }else{
+      finalizeTransaction
     }
   }
 
@@ -374,5 +364,8 @@ object BlockchainParser {
     val genesisBlock = config.getString("coins."+ticker+".genesisBlock").get
     this.start(ticker, genesisBlock)
   }
+
+
+
 
 }

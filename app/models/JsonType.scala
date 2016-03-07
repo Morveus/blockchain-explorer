@@ -31,7 +31,7 @@ case class TransactionVIn(
 )
 
 case class TransactionVOut(
-  value: Long,
+  value: BigDecimal,
   n: Long,
   scriptPubKey: ScriptPubKey
 )
