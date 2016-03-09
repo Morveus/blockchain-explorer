@@ -145,7 +145,7 @@ object BlockchainParser {
   private def getTransaction(ticker:String, txHash:String, block:Option[Block] = None):Future[Unit] = {
     if(txHash == "97ddfbbae6be97fd6cdf3e7ca13232a3afff2353e29badfab7f73011edd4ced9"){
       /* Block genesis */
-      Future.successful("")
+      Future.successful(())
     }else{
       val rpcRequestRaw = Json.obj("jsonrpc" -> "1.0",
                               "method" -> "getrawtransaction",
@@ -366,12 +366,17 @@ object BlockchainParser {
     this.getBlock(ticker, fromBlockHash)
   }
 
-  def resume(ticker:String) = {
+  def resume(ticker:String, force:Boolean = false) = {
     //on reprend la suite de l'indexation à partir de l'avant dernier block stocké (si le dernier n'a pas été ajouté correctement) dans notre bdd
     ElasticSearch.getBeforeLastBlockHash(ticker).map { beforeLastBlockHash =>
       beforeLastBlockHash match {
         case Some(b) => this.startAt(ticker, b)
-        case None => Logger.error("No blocks found, can't resume")
+        case None => {
+          force match {
+            case true => restart(ticker)
+            case false => Logger.error("No blocks found, can't resume")
+          }
+        }
       }
     }
 

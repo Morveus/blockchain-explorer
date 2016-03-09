@@ -38,12 +38,48 @@ object ElasticSearch {
   }
 
   def getTransaction(esIndex:String, txHash:String) = {
-    // val query = Json.obj("query" -> Json.obj("match" -> Json.obj("hash" -> txHash)))
-    // WS.url(elasticSearchUrl+"/"+esIndex+"/transaction/_search").post(query).map { response =>
-    //   ((Json.parse(response.body) \ "hits" \ "hits")(0) \ "_source")
-    // }
     WS.url(elasticSearchUrl+"/"+esIndex+"/transaction/"+txHash).get().map { response =>
       (Json.parse(response.body) \ "_source")
+    }
+  }
+
+  def getTotalReceived(esIndex:String, address:String) = {
+    val query = Json.obj("query" -> 
+                  Json.obj("bool" -> 
+                    Json.obj("should" -> 
+                      Json.arr(
+                        Json.obj("match" -> 
+                          Json.obj("inputs.addresses" -> address)
+                        )
+                      )
+                    )
+                  )
+                )
+
+    /* TODO : retourner directement la value de l'input concerné */
+
+    WS.url(elasticSearchUrl+"/"+esIndex+"/transaction/_search").post(query).map { response =>
+      ((Json.parse(response.body) \ "hits" \ "hits")(0) \ "_source")
+    }
+  }
+
+  def getTotalSent(esIndex:String, address:String) = {
+    val query = Json.obj("query" -> 
+                  Json.obj("bool" -> 
+                    Json.obj("should" -> 
+                      Json.arr(
+                        Json.obj("match" -> 
+                          Json.obj("outputs.addresses" -> address)
+                        )
+                      )
+                    )
+                  )
+                )
+
+    /* TODO : retourner directement la value de l'output concerné */
+
+    WS.url(elasticSearchUrl+"/"+esIndex+"/transaction/_search").post(query).map { response =>
+      ((Json.parse(response.body) \ "hits" \ "hits")(0) \ "_source")
     }
   }
 

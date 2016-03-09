@@ -12,8 +12,15 @@ import models._
 object Application extends Controller {
 
   def index = Action {
-    BlockchainParser.restart("ltc")
+    //BlockchainParser.restart("ltc")
     //BlockchainParser.resume("ltc")
     Ok("Indexation en cours...")
+  }
+
+  def getBalance(ticker: String, addresses: String) = Action.async {
+  	val addressesList:List[String] = addresses.split(",").toList
+  	BlockchainExplorer.getBalance(ticker, addressesList).map { result =>
+  		Ok
+  	}
   }
 }
