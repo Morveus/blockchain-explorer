@@ -38,9 +38,12 @@ object ElasticSearch {
   }
 
   def getTransaction(esIndex:String, txHash:String) = {
-    val query = Json.obj("query" -> Json.obj("match" -> Json.obj("hash" -> txHash)))
-    WS.url(elasticSearchUrl+"/"+esIndex+"/transaction/_search").post(query).map { response =>
-      ((Json.parse(response.body) \ "hits" \ "hits")(0) \ "_source")
+    // val query = Json.obj("query" -> Json.obj("match" -> Json.obj("hash" -> txHash)))
+    // WS.url(elasticSearchUrl+"/"+esIndex+"/transaction/_search").post(query).map { response =>
+    //   ((Json.parse(response.body) \ "hits" \ "hits")(0) \ "_source")
+    // }
+    WS.url(elasticSearchUrl+"/"+esIndex+"/transaction/"+txHash).get().map { response =>
+      (Json.parse(response.body) \ "_source")
     }
   }
 

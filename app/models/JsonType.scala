@@ -56,7 +56,7 @@ case class ScriptPubKey(
 case class ESTransaction(
   hash: String,
   lock_time: Long,
-  block: ESTransactionBlock,
+  block: Option[ESTransactionBlock],
   inputs: List[ESTransactionVIn],
   outputs: List[ESTransactionVOut],
   fees: Long,
@@ -64,9 +64,9 @@ case class ESTransaction(
 )
 
 case class ESTransactionBlock(
-  hash: Option[String],
-  height: Option[Long],
-  time: Option[Long]
+  hash: String,
+  height: Long,
+  time: Long
 )
 
 case class ESTransactionVIn(
