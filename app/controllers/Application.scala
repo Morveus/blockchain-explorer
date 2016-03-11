@@ -9,18 +9,18 @@ import scala.concurrent.ExecutionContext.Implicits.global
 import models._
 
 
+import scala.concurrent.Future
+import scala.util.{Success, Failure}
 object Application extends Controller {
 
-  def index = Action {
-    //BlockchainParser.restart("ltc")
-    //BlockchainParser.resume("ltc")
+  def index = Action {     
     Ok("Indexation en cours...")
   }
 
   def getBalance(ticker: String, addresses: String) = Action.async {
-  	val addressesList:List[String] = addresses.split(",").toList
-  	BlockchainExplorer.getBalance(ticker, addressesList).map { result =>
-  		Ok
-  	}
+    val addressesList:List[String] = addresses.split(",").toList
+    BlockchainExplorer.getBalance(ticker, addressesList).map { result =>
+    Ok
+    }
   }
 }

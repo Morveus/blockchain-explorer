@@ -7,6 +7,8 @@ import play.api.libs.ws._
 import play.api.libs.json._
 
 import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.Future
+import scala.util.{Success, Failure}
 
 
 object ElasticSearch {
@@ -14,19 +16,21 @@ object ElasticSearch {
   val config = play.api.Play.configuration
   val elasticSearchUrl = config.getString("elasticsearch.url").get
 
-  def set(esIndex:String, esType:String, esId:String, data:JsValue) = {
+  def set(esIndex:String, esType:String, esId:String, data:JsValue):Future[Either[Exception,String]] = {
     WS.url(elasticSearchUrl+"/"+esIndex+"/"+esType+"/"+esId).post(data).map { response =>
       /* TODO : vérifier que les données ont été correctement ajoutées à ES */
-      response.body
+      Right(response.body)
+      //Left(new Exception("error set"))
     }
   }
 
-  def getBeforeLastBlockHash(esIndex:String) = {
+  def getBeforeLastBlockHash(esIndex:String):Future[Either[Exception,Option[String]]] = {
+
     val query = Json.obj("sort" -> Json.arr(Json.obj("height" -> Json.obj("order" -> "desc"))),
                          "from" -> 1, "size" -> 1,
                          "fields" -> Json.arr("hash"))
     WS.url(elasticSearchUrl+"/"+esIndex+"/block/_search").post(query).map { response =>
-      ((Json.parse(response.body) \ "hits" \ "hits")(0) \ "fields" \ "hash")(0).asOpt[String]
+      Right(((Json.parse(response.body) \ "hits" \ "hits")(0) \ "fields" \ "hash")(0).asOpt[String])
     }
   }
 

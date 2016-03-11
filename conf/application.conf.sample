@@ -12,6 +12,7 @@ coins={
 		rpcPort="xxxx"
 		rpcUser="xxxxxxxxxxxxxx"
 		rpcPass="xxxxxxxxxxxxxx"
+		dbName="ltc"
 	}
 	doge={
 		ticker="DOGE"
@@ -20,5 +21,6 @@ coins={
 		rpcPort="xxxx"
 		rpcUser="xxxxxxxxxxxxxx"
 		rpcPass="xxxxxxxxxxxxxx"
+		dbName="doge"
 	}
 }

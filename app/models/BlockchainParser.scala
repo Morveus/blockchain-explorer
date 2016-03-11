@@ -10,6 +10,7 @@ import play.api.libs.functional.syntax._
 
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
+import scala.util.{Success, Failure}
 import scala.collection.mutable.{ListBuffer, Map}
 
 import com.ning.http.client.Realm.AuthScheme
@@ -71,7 +72,7 @@ object BlockchainParser {
     btc * 100000000
   }
 
-  private def getBlock(ticker:String, blockHash:String):Unit = {
+  private def getBlock(ticker:String, blockHash:String):Future[Either[Exception,String]] = {
 
     /*
       TODO:
@@ -84,68 +85,94 @@ object BlockchainParser {
 
     val (url, user, pass) = this.connectionParameters(ticker)
 
-    WS.url(url).withAuth(user, pass, WSAuthScheme.BASIC).post(rpcRequest).map { response =>
+    WS.url(url).withAuth(user, pass, WSAuthScheme.BASIC).post(rpcRequest).flatMap { response =>
       val rpcResult = Json.parse(response.body)
       (rpcResult \ "result") match {
-        case JsNull => Logger.warn("Block '"+blockHash+"' not found")
+        case JsNull => Future(Left(new Exception("Block '"+blockHash+"' not found")))
         case result: JsObject => {
           result.validate[Block] match {
             case b: JsSuccess[Block] => {
               val block = b.get
 
-              this.indexBlock(ticker, block).map{ response =>
-                //Logger.debug("Block '"+block.hash+"' added !")
-
-                /* 
-                  NOTE: 
-                  on pourrait ne pas attendre le retour d'ES pour passer aux transactions/block suivant, 
-                  mais actuellement ES ne suit pas : queue de 200 explosée, 
-                  à voir aussi pour modifier les pools, threads pour augmenter la vitesse d'indexation d'ES 
-                */
-
-                /*
-                  TODO:
-                  gérer les exceptions et stopper l'indexation si une erreur s'est produite
-                */
-
-                this.exploreTransactions(ticker, block).map { response =>
-                  block.nextblockhash match {
-                    case Some(nextblockhash) => {
-                      //if(nextblockhash != "3ec54cd17449d3f52fb0c3031abc06aa56736427edf117e7513ba6a4355d0b50"){  /* TODO : à supprimer après les test */
-                        getBlock(ticker, nextblockhash)
-                      //} 
+              indexBlock(ticker, block).flatMap { response =>
+                response match {
+                  case Right(s) => {
+                    Logger.debug(s)
+                    
+                    /* 
+                      NOTE: 
+                      on pourrait ne pas attendre le retour d'ES pour passer aux transactions/block suivant, 
+                      mais actuellement ES ne suit pas : queue de 200 explosée, 
+                      à voir aussi pour modifier les pools, threads pour augmenter la vitesse d'indexation d'ES 
+                    */
+                    
+                    exploreTransactions(ticker, block).flatMap { response =>
+                      response match {
+                        case Right(s) => {
+                          block.nextblockhash match {
+                            case Some(nextblockhash) => {
+                              getBlock(ticker, nextblockhash)
+                            }
+                            case None => {
+                              Logger.debug("Blocks synchronized !")
+                              Future(Right("Blocks synchronized !"))
+                            }
+                          }
+                        }
+                        case Left(e) => {
+                          Future(Left(e))
+                        }
+                      }                       
                     }
-                    case None => Logger.debug("Blocks synchronized !")
+                  }
+                  case Left(e) => {
+                    Future(Left(e))
                   }
                 }
+                
               }
             }
-            case e: JsError => Logger.error("Invalid block from RPC")
+            case e: JsError => Future(Left(new Exception("Invalid block '"+blockHash+"' from RPC : "+response.body)))
           }
         }
-        case _ => Logger.error("Invalid result from RPC")
+        case _ => Future(Left(new Exception("Invalid block '"+blockHash+"' result from RPC : "+response.body)))
       }
     }
   }
 
-  private def indexBlock(ticker:String, block:Block) = {
+  private def indexBlock(ticker:String, block:Block):Future[Either[Exception,String]] = {
     ElasticSearch.set(ticker, "block", block.hash, Json.toJson(block)).map { response =>
-      //println(response)
+      response match {
+        case Right(s) => {
+          Right("Block '"+block.hash+"' added !")
+        }
+        case Left(e) => Left(e)
+      }
+    } recover {
+      case e:Exception => Left(e)
     }
   }
 
-  private def exploreTransactions(ticker:String, block:Block, currentTx: Int = 0):Future[Unit] = {
-    this.getTransaction(ticker, block.tx(currentTx), Some(block)).map { response =>
-      if(currentTx + 1 < block.tx.size){
-        exploreTransactions(ticker, block, currentTx + 1)
+  private def exploreTransactions(ticker:String, block:Block, currentTx: Int = 0):Future[Either[Exception,String]] = {
+    getTransaction(ticker, block.tx(currentTx), Some(block)).flatMap { response =>
+      response match {
+        case Right(s) => {
+          if(currentTx + 1 < block.tx.size){
+            exploreTransactions(ticker, block, currentTx + 1)
+          }else{
+            Future(Right("block '"+block.hash+"' transactions added"))
+          }
+        }
+        case Left(e) => Future(Left(e))
       }
     }
   }
 
-  private def getTransaction(ticker:String, txHash:String, block:Option[Block] = None):Future[Unit] = {
+
+  private def getTransaction(ticker:String, txHash:String, block:Option[Block] = None):Future[Either[Exception,String]] = {
     if(txHash == "97ddfbbae6be97fd6cdf3e7ca13232a3afff2353e29badfab7f73011edd4ced9"){
       /* Block genesis */
-      Future.successful(())
+      Future(Right("genesis block"))
     }else{
       val rpcRequestRaw = Json.obj("jsonrpc" -> "1.0",
                               "method" -> "getrawtransaction",
@@ -164,7 +191,7 @@ object BlockchainParser {
               //println(response.body)
               val rpcResult = Json.parse(response.body)
               (rpcResult \ "result") match {
-                case JsNull => Future{Logger.warn("Transaction '"+txHash+"' not found")}
+                case JsNull => Future(Left(new Exception("Transaction '"+txHash+"' not found")))
                 case result: JsObject => {
                   result.validate[Transaction] match {
                     case t: JsSuccess[Transaction] => {
@@ -174,27 +201,33 @@ object BlockchainParser {
                         TODO:
                         vérifier que lorsqu'on n'est pas dans le cas d'une transaction coinbase, les données des inputs soient bien tous renseignés
                       */
-                      this.indexTransaction(ticker, tx, block).map{ response =>
-                        Logger.debug("Transaction '"+tx.txid+"' added !")
+                      this.indexTransaction(ticker, tx, block).map { response =>
+                        response match {
+                          case Right(s) => {
+                            //Logger.debug(s)
+                            Right(s)
+                          }
+                          case Left(e) => Left(e)
+                        }
+                        
                       }
                     }
                     case e: JsError => {
-                      Logger.error("Invalid transaction from RPC "+ e)
-                      throw new Exception("Invalid transaction from RPC")
+                      Future(Left(new Exception("Invalid transaction '"+txHash+"' from RPC : "+response.body)))
                     } 
                   }
                 }
-                case _ => Future{Logger.error("Invalid result from RPC")}
+                case _ => Future(Left(new Exception("Invalid transaction '"+txHash+"' result from RPC : "+response.body)))
               }
             }
           }
-          case e: JsError => Future{Logger.warn("Transaction '"+txHash+"' not found")}
+          case e: JsError => Future(Left(new Exception("Transaction '"+txHash+"' not found")))
         }
       }
     }
   }
 
-  private def indexTransaction(ticker:String, tx:Transaction, block:Option[Block] = None):Future[Unit] = {
+  private def indexTransaction(ticker:String, tx:Transaction, block:Option[Block] = None):Future[Either[Exception,String]] = {
 
       //on récupère les informations qui nous manquent concernant la transaction
       var resultsFuts: ListBuffer[Future[Unit]] = ListBuffer()
@@ -268,7 +301,7 @@ object BlockchainParser {
                   )
                 updatedInputTx = updatedInputTx.transform(jsonTransformer).get
 
-                Logger.debug("transaction output '"+inTxHash+"'("+outputIndex+") spent by "+tx.txid)
+                //Logger.debug("Transaction output '"+inTxHash+"'("+outputIndex+") spent by "+tx.txid)
 
                 val output = inputTx.outputs(outputIndex)
 
@@ -308,7 +341,7 @@ object BlockchainParser {
         outputs(vout.n.toInt) = output
       }      
 
-      def finalizeTransaction = {
+      def finalizeTransaction:Future[Either[Exception,String]] = {
         var inValues: Long = 0
         var outValues: Long = 0
 
@@ -346,7 +379,12 @@ object BlockchainParser {
   
 
         ElasticSearch.set(ticker, "transaction", tx.txid, Json.toJson(esTx)).map { response =>
-          //println(response)
+          response match {
+            case Right(s) => {
+              Right("Transaction '"+tx.txid+"' added !")
+            }
+            case Left(e) => Left(e)
+          }
         }
       }
 
@@ -362,21 +400,28 @@ object BlockchainParser {
     
   }
 
-  def startAt(ticker:String, fromBlockHash:String) = {
-    this.getBlock(ticker, fromBlockHash)
+  def startAt(ticker:String, fromBlockHash:String):Future[Either[Exception,String]] = {
+    getBlock(ticker, fromBlockHash)
   }
 
-  def resume(ticker:String, force:Boolean = false) = {
+  def resume(ticker:String, force:Boolean = false):Future[Either[Exception,String]] = {
     //on reprend la suite de l'indexation à partir de l'avant dernier block stocké (si le dernier n'a pas été ajouté correctement) dans notre bdd
-    ElasticSearch.getBeforeLastBlockHash(ticker).map { beforeLastBlockHash =>
-      beforeLastBlockHash match {
-        case Some(b) => this.startAt(ticker, b)
-        case None => {
-          force match {
-            case true => restart(ticker)
-            case false => Logger.error("No blocks found, can't resume")
+    ElasticSearch.getBeforeLastBlockHash(ticker).flatMap { response =>
+      response match {
+        case Right(beforeLastBlockHash) => {
+          beforeLastBlockHash match {
+            case Some(b) => {
+              startAt(ticker, b)
+            }
+            case None => {
+              force match {
+                case true => restart(ticker)
+                case false => Future(Left(new Exception("No blocks found, can't resume")))
+              }
+            }
           }
         }
+        case Left(e) => Future(Left(e))
       }
     }
 
@@ -386,10 +431,10 @@ object BlockchainParser {
     */
   }
 
-  def restart(ticker:String) = {
+  def restart(ticker:String):Future[Either[Exception,String]] = {
     //on recommence l'indexation à partir du block genesis
     val genesisBlock = config.getString("coins."+ticker+".genesisBlock").get
-    this.startAt(ticker, genesisBlock)
+    startAt(ticker, genesisBlock)
   }
 
 
