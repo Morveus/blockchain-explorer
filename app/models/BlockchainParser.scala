@@ -20,6 +20,14 @@ object BlockchainParser {
 
   val config = play.api.Play.configuration
   val elasticSearchUrl = config.getString("elasticsearch.url").get
+  val elasticSearchMaxQueries = config.getString("elasticsearch.maxQueries").get
+  val RPCMaxQueries = config.getString("rpc.maxQueries").get
+
+  val maxqueries = RPCMaxQueries
+  if(elasticSearchMaxQueries < RPCMaxQueries){
+    maxqueries = elasticSearchMaxQueries
+  }
+
 
   implicit val blockReads             = Json.reads[Block]
   implicit val blockWrites            = Json.writes[Block]
@@ -180,10 +188,9 @@ object BlockchainParser {
 
   private def exploreTransactionsAsync(ticker:String, block:Block, currentPool:Int = 0):Future[Either[Exception,String]] = {
     var resultsFuts: ListBuffer[Future[Either[Exception,String]]] = ListBuffer()
-    val maxQueries = 150
 
     val txNb = block.tx.length
-    val poolsTxs = block.tx.grouped(maxQueries).toList
+    val poolsTxs = block.tx.grouped(maxqueries).toList
 
     for(tx <- poolsTxs(currentPool)){
       resultsFuts += getTransaction(ticker, tx, Some(block))
