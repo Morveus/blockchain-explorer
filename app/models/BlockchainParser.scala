@@ -20,10 +20,10 @@ object BlockchainParser {
 
   val config = play.api.Play.configuration
   val elasticSearchUrl = config.getString("elasticsearch.url").get
-  val elasticSearchMaxQueries = config.getString("elasticsearch.maxQueries").get
-  val RPCMaxQueries = config.getString("rpc.maxQueries").get
+  val elasticSearchMaxQueries = config.getInt("elasticsearch.maxqueries").get
+  val RPCMaxQueries = config.getInt("rpc.maxqueries").get
 
-  val maxqueries = RPCMaxQueries
+  var maxqueries = RPCMaxQueries
   if(elasticSearchMaxQueries < RPCMaxQueries){
     maxqueries = elasticSearchMaxQueries
   }
