@@ -216,7 +216,7 @@ object BlockchainParser {
                       this.indexTransaction(ticker, tx, block).map { response =>
                         response match {
                           case Right(s) => {
-                            //Logger.debug(s)
+                            Logger.debug(s)
                             Right(s)
                           }
                           case Left(e) => Left(e)
@@ -290,7 +290,18 @@ object BlockchainParser {
             )
           }
           case None => {
-             //standard transaction
+            //standard transaction
+
+            inputs(i) = Json.obj(
+              "output_hash" -> vin.txid.get,
+              "output_index" -> vin.vout.get.toInt,
+              "input_index" -> i,
+              "value" -> JsNull,
+              "addresses" -> JsNull
+            )
+
+            /*
+            //A traiter à la fin:
             previousOuts.contains(vin.txid.get) match {
               case true => {
                 var listPrev:List[(Int, Int)] = previousOuts(vin.txid.get)
@@ -300,10 +311,12 @@ object BlockchainParser {
                 previousOuts(vin.txid.get) = List((i, vin.vout.get.toInt))
               }
             }
+            */
           }
         }
       }
 
+      /*
       for((inTxHash, data) <- previousOuts){
         resultsFuts += ElasticSearch.getTransaction(ticker, inTxHash).map { result => 
           result.validate[ESTransaction] match {
@@ -348,6 +361,7 @@ object BlockchainParser {
           }
         }
       }
+      */
 
       for(vout <- tx.vout){
         var output = Json.obj(
