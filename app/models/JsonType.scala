@@ -44,9 +44,9 @@ case class ScriptSig(
 case class ScriptPubKey(
   asm: String,
   hex: String,
-  reqSigs: Long,
+  reqSigs: Option[Long],
   `type`: String,
-  addresses: List[String]
+  addresses: Option[List[String]]
 )
 
 
@@ -82,6 +82,6 @@ case class ESTransactionVOut(
   value: Long,
   output_index: Long,
   script_hex: String,
-  addresses: List[String],
+  addresses: Option[List[String]],
   spent_by: Option[String]
 )

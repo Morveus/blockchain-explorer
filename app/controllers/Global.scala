@@ -12,8 +12,8 @@ object Global extends WithFilters(new GzipFilter(shouldGzip = (request, response
   override def onStart(app: Application) {
     Logger.info("BlockchainExplorer API started")
 
-    //BlockchainParser.resume("ltc", true).map { response =>
-    BlockchainParser.restart("ltc").map { response =>
+    BlockchainParser.resume("ltc", true).map { response =>
+    //BlockchainParser.restart("ltc").map { response =>
       response match {
         case Right(s) => Logger.debug("BlockchainParser result : " + s)
         case Left(e) => Logger.error("BlockchainParser Exception : " + e.toString)

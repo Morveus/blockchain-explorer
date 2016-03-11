@@ -43,7 +43,7 @@ object BlockchainParser {
     (JsPath \ "value").read[Long] and
     (JsPath \ "output_index").read[Long] and
     (JsPath \ "script_hex").read[String] and
-    (JsPath \ "addresses").read[List[String]] and
+    (JsPath \ "addresses").readNullable[List[String]] and
     (JsPath \ "spent_by").readNullable[String]
   )(ESTransactionVOut.apply _)
   //implicit val esTransactionVOutWrites  = Json.writes[ESTransactionVOut]
@@ -51,7 +51,7 @@ object BlockchainParser {
     (JsPath \ "value").write[Long] and
     (JsPath \ "output_index").write[Long] and
     (JsPath \ "script_hex").write[String] and
-    (JsPath \ "addresses").write[List[String]] and
+    (JsPath \ "addresses").writeNullable[List[String]] and
     (JsPath \ "spent_by").writeNullable[String]
   )(unlift(ESTransactionVOut.unapply))
   implicit val esTransactionReads       = Json.reads[ESTransaction]
@@ -109,7 +109,7 @@ object BlockchainParser {
                       à voir aussi pour modifier les pools, threads pour augmenter la vitesse d'indexation d'ES 
                     */
                     
-                    exploreTransactions(ticker, block).flatMap { response =>
+                    exploreTransactionsAsync(ticker, block).flatMap { response =>
                       response match {
                         case Right(s) => {
                           block.nextblockhash match {
@@ -127,6 +127,7 @@ object BlockchainParser {
                         }
                       }                       
                     }
+
                   }
                   case Left(e) => {
                     Future(Left(e))
@@ -162,12 +163,12 @@ object BlockchainParser {
     }
   }
 
-  private def exploreTransactions(ticker:String, block:Block, currentTx: Int = 0):Future[Either[Exception,String]] = {
+  private def exploreTransactionsSync(ticker:String, block:Block, currentTx: Int = 0):Future[Either[Exception,String]] = {
     getTransaction(ticker, block.tx(currentTx), Some(block)).flatMap { response =>
       response match {
         case Right(s) => {
           if(currentTx + 1 < block.tx.size){
-            exploreTransactions(ticker, block, currentTx + 1)
+            exploreTransactionsSync(ticker, block, currentTx + 1)
           }else{
             Future(Right("block '"+block.hash+"' transactions added"))
           }
@@ -175,6 +176,47 @@ object BlockchainParser {
         case Left(e) => Future(Left(e))
       }
     }
+  }
+
+  private def exploreTransactionsAsync(ticker:String, block:Block, currentPool:Int = 0):Future[Either[Exception,String]] = {
+    var resultsFuts: ListBuffer[Future[Either[Exception,String]]] = ListBuffer()
+    val maxQueries = 150
+
+    val txNb = block.tx.length
+    val poolsTxs = block.tx.grouped(maxQueries).toList
+
+    for(tx <- poolsTxs(currentPool)){
+      resultsFuts += getTransaction(ticker, tx, Some(block))
+    }
+
+    if(resultsFuts.size > 0) {
+      val futuresResponses: Future[ListBuffer[Either[Exception,String]]] = Future.sequence(resultsFuts)
+      futuresResponses.flatMap { responses =>
+        var returnEither:Either[Exception,String] = Right("Block '"+block.hash+"' transactions added")
+        for(response <- responses){
+          response match {
+            case Right(s) => 
+            case Left(e) => {
+              returnEither = Left(e)
+            }
+          }
+        }
+
+        returnEither match {
+          case Right(s) => {
+            if(currentPool + 1 < poolsTxs.size){
+              exploreTransactionsAsync(ticker, block, currentPool + 1)
+            }else{
+              Future(Right("Block '"+block.hash+"' transactions added"))
+            }
+          }
+          case Left(e) => Future(Left(e))
+        }
+
+      }
+    }else{
+      Future(Right("No block '"+block.hash+"' transactions to add"))
+    }     
   }
 
 
