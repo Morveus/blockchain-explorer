@@ -88,7 +88,10 @@ object BlockchainParser {
     WS.url(url).withAuth(user, pass, WSAuthScheme.BASIC).post(rpcRequest).flatMap { response =>
       val rpcResult = Json.parse(response.body)
       (rpcResult \ "result") match {
-        case JsNull => Future(Left(new Exception("Block '"+blockHash+"' not found")))
+        case JsNull => {
+          Logger.error("Block '"+blockHash+"' not found")
+          Future(Left(new Exception("Block '"+blockHash+"' not found")))
+        }
         case result: JsObject => {
           result.validate[Block] match {
             case b: JsSuccess[Block] => {
@@ -132,10 +135,16 @@ object BlockchainParser {
                 
               }
             }
-            case e: JsError => Future(Left(new Exception("Invalid block '"+blockHash+"' from RPC : "+response.body)))
+            case e: JsError => {
+              Logger.error("Invalid block '"+blockHash+"' from RPC : "+response.body)
+              Future(Left(new Exception("Invalid block '"+blockHash+"' from RPC : "+response.body)))
+            }
           }
         }
-        case _ => Future(Left(new Exception("Invalid block '"+blockHash+"' result from RPC : "+response.body)))
+        case _ => {
+          Logger.error("Invalid block '"+blockHash+"' result from RPC : "+response.body)
+          Future(Left(new Exception("Invalid block '"+blockHash+"' result from RPC : "+response.body)))
+        }
       }
     }
   }
@@ -191,7 +200,10 @@ object BlockchainParser {
               //println(response.body)
               val rpcResult = Json.parse(response.body)
               (rpcResult \ "result") match {
-                case JsNull => Future(Left(new Exception("Transaction '"+txHash+"' not found")))
+                case JsNull => {
+                  Logger.error("Transaction '"+txHash+"' not found")
+                  Future(Left(new Exception("Transaction '"+txHash+"' not found")))
+                }
                 case result: JsObject => {
                   result.validate[Transaction] match {
                     case t: JsSuccess[Transaction] => {
@@ -213,15 +225,22 @@ object BlockchainParser {
                       }
                     }
                     case e: JsError => {
+                      Logger.error("Invalid transaction '"+txHash+"' from RPC : "+response.body)
                       Future(Left(new Exception("Invalid transaction '"+txHash+"' from RPC : "+response.body)))
                     } 
                   }
                 }
-                case _ => Future(Left(new Exception("Invalid transaction '"+txHash+"' result from RPC : "+response.body)))
+                case _ => {
+                  Logger.error("Invalid transaction '"+txHash+"' result from RPC : "+response.body)
+                  Future(Left(new Exception("Invalid transaction '"+txHash+"' result from RPC : "+response.body)))
+                }
               }
             }
           }
-          case e: JsError => Future(Left(new Exception("Transaction '"+txHash+"' not found")))
+          case e: JsError => {
+            Logger.error("Transaction '"+txHash+"' not found")
+            Future(Left(new Exception("Transaction '"+txHash+"' not found")))
+          }
         }
       }
     }
@@ -416,7 +435,10 @@ object BlockchainParser {
             case None => {
               force match {
                 case true => restart(ticker)
-                case false => Future(Left(new Exception("No blocks found, can't resume")))
+                case false => {
+                  Logger.error("No blocks found, can't resume")
+                  Future(Left(new Exception("No blocks found, can't resume")))
+                }
               }
             }
           }
