@@ -1,7 +1,7 @@
 # See http://www.playframework.com/documentation/latest/ApplicationSecret for more details.
 application.secret="xxxxxxxxxxxxxxxxxxx"
 
-elasticsearch.url="http://xxx.xxx.xxx.xxx:xxxx"
+rpc.maxqueries=50
 
 # Coins
 coins={
@@ -12,7 +12,11 @@ coins={
 		rpcPort="xxxx"
 		rpcUser="xxxxxxxxxxxxxx"
 		rpcPass="xxxxxxxxxxxxxx"
-		dbName="ltc"
+		neo4j.url="xxx.xxx.xxx.xxx"
+		neo4j.port=xxxx
+		neo4j.user="xxxxxxxxxxxxxx"
+		neo4j.pass="xxxxxxxxxxxxxx"
+		neo4j.maxQueries=10
 	}
 	doge={
 		ticker="DOGE"
@@ -21,6 +25,10 @@ coins={
 		rpcPort="xxxx"
 		rpcUser="xxxxxxxxxxxxxx"
 		rpcPass="xxxxxxxxxxxxxx"
-		dbName="doge"
+		neo4j.url="xxx.xxx.xxx.xxx"
+		neo4j.port=xxxx
+		neo4j.user="xxxxxxxxxxxxxx"
+		neo4j.pass="xxxxxxxxxxxxxx"
+		neo4j.maxQueries=10
 	}
 }

@@ -12,6 +12,7 @@ object Global extends WithFilters(new GzipFilter(shouldGzip = (request, response
   override def onStart(app: Application) {
     Logger.info("BlockchainExplorer API started")
 
+    /*
     BlockchainParser.resume("ltc", true).map { response =>
     //BlockchainParser.restart("ltc").map { response =>
       response match {
@@ -19,7 +20,7 @@ object Global extends WithFilters(new GzipFilter(shouldGzip = (request, response
         case Left(e) => Logger.error("BlockchainParser Exception : " + e.toString)
       }
     }
-    
+    */
   }
 
   override def onStop(app: Application) {

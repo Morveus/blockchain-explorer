@@ -1,4 +1,3 @@
-/*
 package models
 
 import play.api._
@@ -17,54 +16,33 @@ import scala.collection.mutable.{ListBuffer, Map}
 import com.ning.http.client.Realm.AuthScheme
 
 
-object BlockchainParser {
+object Neo4jBlockchainIndexer {
 
   val config = play.api.Play.configuration
-  val elasticSearchUrl = config.getString("elasticsearch.url").get
-  val elasticSearchMaxQueries = config.getInt("elasticsearch.maxqueries").get
   val RPCMaxQueries = config.getInt("rpc.maxqueries").get
 
   var maxqueries = RPCMaxQueries
-  if(elasticSearchMaxQueries < RPCMaxQueries){
-    maxqueries = elasticSearchMaxQueries
-  }
+  // if(elasticSearchMaxQueries < RPCMaxQueries){
+  //   maxqueries = elasticSearchMaxQueries
+  // }
 
 
-  implicit val blockReads             = Json.reads[Block]
-  implicit val blockWrites            = Json.writes[Block]
-  implicit val scriptSigReads         = Json.reads[ScriptSig]
-  implicit val scriptSigWrites        = Json.writes[ScriptSig]
-  implicit val transactionVInReads    = Json.reads[TransactionVIn]
-  implicit val transactionVInWrites   = Json.writes[TransactionVIn]
-  implicit val scriptPubKeyReads      = Json.reads[ScriptPubKey]
-  implicit val scriptPubKeyWrites     = Json.writes[ScriptPubKey]
-  implicit val transactionVOutReads   = Json.reads[TransactionVOut]
-  implicit val transactionVOutWrites  = Json.writes[TransactionVOut]
-  implicit val transactionReads       = Json.reads[Transaction]
-  implicit val transactionWrites      = Json.writes[Transaction]
+  implicit val blockReads             = Json.reads[RPCBlock]
+  implicit val blockWrites            = Json.writes[RPCBlock]
+  implicit val scriptSigReads         = Json.reads[RPCScriptSig]
+  implicit val scriptSigWrites        = Json.writes[RPCScriptSig]
+  implicit val transactionVInReads    = Json.reads[RPCTransactionVIn]
+  implicit val transactionVInWrites   = Json.writes[RPCTransactionVIn]
+  implicit val scriptPubKeyReads      = Json.reads[RPCScriptPubKey]
+  implicit val scriptPubKeyWrites     = Json.writes[RPCScriptPubKey]
+  implicit val transactionVOutReads   = Json.reads[RPCTransactionVOut]
+  implicit val transactionVOutWrites  = Json.writes[RPCTransactionVOut]
+  implicit val transactionReads       = Json.reads[RPCTransaction]
+  implicit val transactionWrites      = Json.writes[RPCTransaction]
 
-  implicit val esTransactionBlockReads  = Json.reads[ESTransactionBlock ]
-  implicit val esTransactionBlockWrites = Json.writes[ESTransactionBlock ]
-  implicit val esTransactionVInReads    = Json.reads[ESTransactionVIn]
-  implicit val esTransactionVInWrites   = Json.writes[ESTransactionVIn]
-  //implicit val esTransactionVOutReads   = Json.reads[ESTransactionVOut]
-  implicit val esTransactionVOutReads : Reads[ESTransactionVOut] = (
-    (JsPath \ "value").read[Long] and
-    (JsPath \ "output_index").read[Long] and
-    (JsPath \ "script_hex").read[String] and
-    (JsPath \ "addresses").readNullable[List[String]] and
-    (JsPath \ "spent_by").readNullable[String]
-  )(ESTransactionVOut.apply _)
-  //implicit val esTransactionVOutWrites  = Json.writes[ESTransactionVOut]
-  implicit val esTransactionVOutWrites : Writes[ESTransactionVOut] = (
-    (JsPath \ "value").write[Long] and
-    (JsPath \ "output_index").write[Long] and
-    (JsPath \ "script_hex").write[String] and
-    (JsPath \ "addresses").writeNullable[List[String]] and
-    (JsPath \ "spent_by").writeNullable[String]
-  )(unlift(ESTransactionVOut.unapply))
-  implicit val esTransactionReads       = Json.reads[ESTransaction]
-  implicit val esTransactionWrites      = Json.writes[ESTransaction]
+  implicit val esTransactionBlockReads  = Json.reads[NeoBlock ]
+  implicit val esTransactionBlockWrites = Json.writes[NeoBlock ]
+  
 
   private def connectionParameters(ticker:String) = {
     val ipNode = config.getString("coins."+ticker+".ipNode")
@@ -77,8 +55,8 @@ object BlockchainParser {
     }
   }
 
-  private def satoshi(btc:BigDecimal) = {
-    btc * 100000000
+  private def satoshi(btc:BigDecimal):Long = {
+    (btc * 100000000).toLong
   }
 
   private def getBlock(ticker:String, blockHash:String):Future[Either[Exception,String]] = {
@@ -102,33 +80,37 @@ object BlockchainParser {
           Future(Left(new Exception("Block '"+blockHash+"' not found")))
         }
         case result: JsObject => {
-          result.validate[Block] match {
-            case b: JsSuccess[Block] => {
-              val block = b.get
+          result.validate[RPCBlock] match {
+            case b: JsSuccess[RPCBlock] => {
+              val rpcBlock = b.get
 
-              indexBlock(ticker, block).flatMap { response =>
+              val block = NeoBlock(rpcBlock.hash, rpcBlock.height, rpcBlock.time, true)
+
+              indexBlock(ticker, block, rpcBlock.previousblockhash).flatMap { response =>
                 response match {
                   case Right(s) => {
-                    Logger.debug(s)
+                    Logger.debug(s) //Block added
 
-                    exploreTransactionsAsync(ticker, block).flatMap { response =>
-                      response match {
-                        case Right(s) => {
-                          block.nextblockhash match {
+                    exploreTransactionsAsync(ticker, rpcBlock).flatMap { response =>
+                     response match {
+                       case Right(s) => {
+                          rpcBlock.nextblockhash match {
                             case Some(nextblockhash) => {
                               getBlock(ticker, nextblockhash)
                             }
                             case None => {
                               Logger.debug("Blocks synchronized !")
-                              // Future(Right("Blocks synchronized !"))
-                              finalizeSpent(ticker).map { response =>
-                                response match {
-                                  case Right(s) => {
-                                    Right("Indexation finished !")
-                                  }
-                                  case Left(e) => Left(e)
-                                }
-                              }
+
+
+                              Future(Right("Blocks synchronized !"))
+                              // finalizeSpent(ticker).map { response =>
+                              //   response match {
+                              //     case Right(s) => {
+                              //       Right("Indexation finished !")
+                              //     }
+                              //     case Left(e) => Left(e)
+                              //   }
+                              // }
                             }
                           }
                         }
@@ -160,8 +142,8 @@ object BlockchainParser {
     }
   }
 
-  private def indexBlock(ticker:String, block:Block):Future[Either[Exception,String]] = {
-    ElasticSearch.set(ticker, "block", block.hash, Json.toJson(block)).map { response =>
+  private def indexBlock(ticker:String, block:NeoBlock, previousBlockHash:Option[String]):Future[Either[Exception,String]] = {
+    Neo4j.addBlock(ticker, block, previousBlockHash).map { response =>
       response match {
         case Right(s) => {
           Right("Block '"+block.hash+"' added !")
@@ -173,6 +155,7 @@ object BlockchainParser {
     }
   }
 
+  /*
   private def exploreTransactionsSync(ticker:String, block:Block, currentTx: Int = 0):Future[Either[Exception,String]] = {
     getTransaction(ticker, block.tx(currentTx), Some(block)).flatMap { response =>
       response match {
@@ -187,8 +170,9 @@ object BlockchainParser {
       }
     }
   }
+  */
 
-  private def exploreTransactionsAsync(ticker:String, block:Block, currentPool:Int = 0):Future[Either[Exception,String]] = {
+  private def exploreTransactionsAsync(ticker:String, block:RPCBlock, currentPool:Int = 0):Future[Either[Exception,String]] = {
     var resultsFuts: ListBuffer[Future[Either[Exception,String]]] = ListBuffer()
 
     val txNb = block.tx.length
@@ -229,7 +213,7 @@ object BlockchainParser {
   }
 
 
-  private def getTransaction(ticker:String, txHash:String, block:Option[Block] = None):Future[Either[Exception,String]] = {
+  private def getTransaction(ticker:String, txHash:String, block:Option[RPCBlock] = None):Future[Either[Exception,String]] = {
     if(txHash == "97ddfbbae6be97fd6cdf3e7ca13232a3afff2353e29badfab7f73011edd4ced9"){
       /* Block genesis */
       Future(Right("genesis block"))
@@ -256,18 +240,14 @@ object BlockchainParser {
                   Future(Left(new Exception("Transaction '"+txHash+"' not found")))
                 }
                 case result: JsObject => {
-                  result.validate[Transaction] match {
-                    case t: JsSuccess[Transaction] => {
+                  result.validate[RPCTransaction] match {
+                    case t: JsSuccess[RPCTransaction] => {
                       val tx = t.get
 
-                      /*
-                        TODO:
-                        vérifier que lorsqu'on n'est pas dans le cas d'une transaction coinbase, les données des inputs soient bien tous renseignés
-                      */
                       this.indexTransaction(ticker, tx, block).map { response =>
                         response match {
                           case Right(s) => {
-                            Logger.debug(s)
+                            Logger.debug(s) //TX added
                             Right(s)
                           }
                           case Left(e) => Left(e)
@@ -297,113 +277,64 @@ object BlockchainParser {
     }
   }
 
-  private def indexTransaction(ticker:String, tx:Transaction, block:Option[Block] = None):Future[Either[Exception,String]] = {
+  private def indexTransaction(ticker:String, rpcTx:RPCTransaction, rpcBlock:Option[RPCBlock] = None):Future[Either[Exception,String]] = {
 
       //on récupère les informations qui nous manquent concernant la transaction
       var resultsFuts: ListBuffer[Future[Unit]] = ListBuffer()
 
-      var esBlock: ESTransactionBlock = ESTransactionBlock("",0,0)
-      var inputs: Map[Int, JsValue] = Map()
-      var outputs: Map[Int, JsValue] = Map()
-      block match {
+      var block: NeoBlock = NeoBlock("",0,0, true)
+      var inputs: Map[Int, NeoInput] = Map()
+      var outputs: Map[Int, NeoOutput] = Map()
+      rpcBlock match {
         case Some(b) => {
-          esBlock = ESTransactionBlock(b.hash, b.height, b.time)
+          block = NeoBlock(b.hash, b.height, b.time, true)
         }
         case None => {
-          resultsFuts += ElasticSearch.getBlockFromTxHash(ticker, tx.txid).map { result => 
+          /*
+          TODO:
+          resultsFuts += Neo4j.getBlockFromTxHash(ticker, rpcTx.txid).map { result => 
             result match {
               case Right(s) => {
-                s.validate[Block] match {
-                  case b: JsSuccess[Block] => {
-                    esBlock = ESTransactionBlock(b.get.hash, b.get.height, b.get.time)
+                s.validate[RPCBlock] match {
+                  case b: JsSuccess[RPCBlock] => {
+                    block = NeoBlock(b.get.hash, b.get.height, b.get.time)
                   }
-                  case e: JsError => Logger.error("Invalid result from ElasticSearch.getBlockFromTxHash (txid : "+tx.txid+") "+e)
+                  case e: JsError => Logger.error("Invalid result from ElasticSearch.getBlockFromTxHash (txid : "+rpcTx.txid+") "+e)
                 }
               }
               case Left(e) => Left(e)
             }
 
           }
+          */
         }
       }
 
       var previousOuts = Map[String, List[(Int, Int)]]()
-      for((vin, i) <- tx.vin.zipWithIndex){
+      for((vin, i) <- rpcTx.vin.zipWithIndex){
         vin.coinbase match {
           case Some(c) => {
             //generation transaction
-            inputs(i) = Json.obj(
-              "coinbase" -> c,
-              "input_index" -> i
-            )
+            inputs(i) = NeoInput(i, Some(c), None, None)
           }
           case None => {
             //standard transaction
-
-            inputs(i) = Json.obj(
-              "output_hash" -> vin.txid.get,
-              "output_index" -> vin.vout.get.toInt,
-              "input_index" -> i,
-              "value" -> JsNull,
-              "addresses" -> JsNull
-            )
+            inputs(i) = NeoInput(i, None, Some(vin.vout.get.toInt), Some(vin.txid.get))
           }
         }
       }
 
-      for(vout <- tx.vout){
-        var output = Json.obj(
-          "value" -> satoshi(vout.value),
-          "output_index" -> vout.n,
-          "script_hex" -> vout.scriptPubKey.hex,
-          "addresses" -> vout.scriptPubKey.addresses,
-          "spent_by" -> JsNull
-        )
-        outputs(vout.n.toInt) = output
+      for(vout <- rpcTx.vout){
+        outputs(vout.n.toInt) = NeoOutput(vout.n.toInt, satoshi(vout.value), vout.scriptPubKey.hex, vout.scriptPubKey.addresses.getOrElse(List[String]()))
       }      
 
       def finalizeTransaction:Future[Either[Exception,String]] = {
-        var inValues: Long = 0
-        var outValues: Long = 0
+        val tx = NeoTransaction(rpcTx.txid, block.time, rpcTx.locktime, None, None)
 
-        var inputsJs:JsArray = new JsArray
-        for((inIndex, input) <- inputs.toSeq.sortBy(_._1)){
-          inputsJs = inputsJs ++ Json.arr(Json.toJson(input))
-          (input \ "value").asOpt[Long] match {
-            case Some(v) => inValues += v 
-            case None => //coinbase
-          }
-        }
-        var outputsJs:JsArray = new JsArray
-        for((outIndex, output) <- outputs.toSeq.sortBy(_._1)){
-          outputsJs = outputsJs ++ Json.arr(Json.toJson(output))
-          (output \ "value").asOpt[Long] match {
-            case Some(v) => outValues += v 
-            case None => //coinbase
-          }
-        }
-
-        var fees:Long = 0
-        if(inValues > 0){
-          fees = inValues - outValues
-        }
-        var amount = outValues
-
-        var esTx = Json.obj(
-          "hash" -> tx.txid,
-          "received_at" -> esBlock.time,
-          "lock_time" -> tx.locktime,
-          "block" -> esBlock,
-          "inputs" -> inputsJs,
-          "outputs" -> outputsJs,
-          "fees" -> fees,
-          "amount" -> amount)
-  
-
-        ElasticSearch.set(ticker, "transaction", tx.txid, Json.toJson(esTx)).map { response =>
+        Neo4j.addTransaction(ticker, tx, block.hash, inputs, outputs).map { response =>
           response match {
             case Right(s) => {
-              Right("Transaction '"+tx.txid+"' added !")
+              Right("Transaction '"+rpcTx.txid+"' added !")
             }
             case Left(e) => Left(e)
           }
@@ -419,7 +350,7 @@ object BlockchainParser {
         finalizeTransaction
       }
   }
-
+  /*
   def finalizeSpent(ticker:String):Future[Either[Exception,String]] = {
     finalizePageSpent(ticker).flatMap { response =>
       response match {
@@ -664,6 +595,7 @@ object BlockchainParser {
       }
     }
   }
+  */
 
   def startAt(ticker:String, fromBlockHash:String):Future[Either[Exception,String]] = {
     getBlock(ticker, fromBlockHash)
@@ -671,7 +603,7 @@ object BlockchainParser {
 
   def resume(ticker:String, force:Boolean = false):Future[Either[Exception,String]] = {
     //on reprend la suite de l'indexation à partir de l'avant dernier block stocké (si le dernier n'a pas été ajouté correctement) dans notre bdd
-    ElasticSearch.getBeforeLastBlockHash(ticker).flatMap { response =>
+    Neo4j.getBeforeLastBlockHash(ticker).flatMap { response =>
       response match {
         case Right(beforeLastBlockHash) => {
           beforeLastBlockHash match {
@@ -709,4 +641,3 @@ object BlockchainParser {
 
 
 }
-*/
