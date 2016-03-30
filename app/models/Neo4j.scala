@@ -81,8 +81,8 @@ object Neo4j {
       success match {
         case true => Right("Block added")
         case false => {
-          Logger.debug(query)
-          Logger.debug(params.toString)
+          ApiLogs.debug(query)
+          ApiLogs.debug(params.toString)
           Left(new Exception("Error : Neo4j.addBlock("+ticker+","+block+","+previousBlockHash+") not inserted"))
         }
       }
@@ -187,7 +187,7 @@ object Neo4j {
           temp = cypherQuery.execute()
           results += temp
           if(cypherQueries.size > 1){
-            Logger.debug("Query n°"+i+"/"+cypherQueries.size.toString)
+            ApiLogs.debug("Query n°"+i+"/"+cypherQueries.size.toString)
           }          
           if(temp == false){
             break
@@ -199,8 +199,8 @@ object Neo4j {
 
       results.contains(false) match {
         case true => {
-          Logger.debug(fullQuery)
-          Logger.debug(params.toString)  
+          ApiLogs.debug(fullQuery)
+          ApiLogs.debug(params.toString)  
           Left(new Exception("Error : Neo4j.addTransaction("+ticker+","+tx+","+blockHash+", "+inputs+", "+outputs+") not inserted"))
         }
         case false => Right("Transaction added")//Right("Transaction added")//Left(new Exception("Transaction added"))
@@ -238,7 +238,7 @@ object Neo4j {
       }catch{
         case e:Exception => {
           wsclient.close()
-          Logger.debug(query)
+          ApiLogs.debug(query)
           Left(new Exception("Error : Neo4j.getBeforeLastBlockHash("+ticker+") no result : "+e.getMessage))
         }
       }
@@ -269,7 +269,7 @@ object Neo4j {
       }catch{
         case e:Exception => {
           wsclient.close()
-          Logger.debug(query)
+          ApiLogs.debug(query)
           Left(new Exception("Error : Neo4j.getBeforeLastBlockHash("+ticker+") no result"))
         }
       }

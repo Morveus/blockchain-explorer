@@ -76,7 +76,7 @@ object Neo4jBlockchainIndexer {
       val rpcResult = Json.parse(response.body)
       (rpcResult \ "result") match {
         case JsNull => {
-          Logger.error("Block '"+blockHash+"' not found")
+          ApiLogs.error("Block '"+blockHash+"' not found")
           Future(Left(new Exception("Block '"+blockHash+"' not found")))
         }
         case result: JsObject => {
@@ -89,7 +89,7 @@ object Neo4jBlockchainIndexer {
               indexBlock(ticker, block, rpcBlock.previousblockhash).flatMap { response =>
                 response match {
                   case Right(s) => {
-                    Logger.debug(s) //Block added
+                    ApiLogs.debug(s) //Block added
 
                     exploreTransactionsAsync(ticker, rpcBlock).flatMap { response =>
                      response match {
@@ -99,18 +99,8 @@ object Neo4jBlockchainIndexer {
                               getBlock(ticker, nextblockhash)
                             }
                             case None => {
-                              Logger.debug("Blocks synchronized !")
-
-
+                              ApiLogs.debug("Blocks synchronized !")
                               Future(Right("Blocks synchronized !"))
-                              // finalizeSpent(ticker).map { response =>
-                              //   response match {
-                              //     case Right(s) => {
-                              //       Right("Indexation finished !")
-                              //     }
-                              //     case Left(e) => Left(e)
-                              //   }
-                              // }
                             }
                           }
                         }
@@ -129,13 +119,13 @@ object Neo4jBlockchainIndexer {
               }
             }
             case e: JsError => {
-              Logger.error("Invalid block '"+blockHash+"' from RPC : "+response.body)
+              ApiLogs.error("Invalid block '"+blockHash+"' from RPC : "+response.body)
               Future(Left(new Exception("Invalid block '"+blockHash+"' from RPC : "+response.body)))
             }
           }
         }
         case _ => {
-          Logger.error("Invalid block '"+blockHash+"' result from RPC : "+response.body)
+          ApiLogs.error("Invalid block '"+blockHash+"' result from RPC : "+response.body)
           Future(Left(new Exception("Invalid block '"+blockHash+"' result from RPC : "+response.body)))
         }
       }
@@ -211,7 +201,7 @@ object Neo4jBlockchainIndexer {
         val rpcResult = Json.parse(response.body)
         (rpcResult \ "result") match {
           case JsNull => {
-            Logger.error("Transaction '"+txHash+"' not found")
+            ApiLogs.error("Transaction '"+txHash+"' not found")
             Future(Left(new Exception("Transaction '"+txHash+"' not found")))
           }
           case result: JsObject => {
@@ -222,7 +212,7 @@ object Neo4jBlockchainIndexer {
                 this.indexTransaction(ticker, tx, block).map { response =>
                   response match {
                     case Right(s) => {
-                      Logger.debug(s) //TX added
+                      ApiLogs.debug(s) //TX added
                       Right(s)
                     }
                     case Left(e) => Left(e)
@@ -231,13 +221,13 @@ object Neo4jBlockchainIndexer {
                 }
               }
               case e: JsError => {
-                Logger.error("Invalid transaction '"+txHash+"' from RPC : "+response.body)
+                ApiLogs.error("Invalid transaction '"+txHash+"' from RPC : "+response.body)
                 Future(Left(new Exception("Invalid transaction '"+txHash+"' from RPC : "+response.body)))
               } 
             }
           }
           case _ => {
-            Logger.error("Invalid transaction '"+txHash+"' result from RPC : "+response.body)
+            ApiLogs.error("Invalid transaction '"+txHash+"' result from RPC : "+response.body)
             Future(Left(new Exception("Invalid transaction '"+txHash+"' result from RPC : "+response.body)))
           }
         }
@@ -267,7 +257,7 @@ object Neo4jBlockchainIndexer {
                   case b: JsSuccess[RPCBlock] => {
                     block = NeoBlock(b.get.hash, b.get.height, b.get.time)
                   }
-                  case e: JsError => Logger.error("Invalid result from ElasticSearch.getBlockFromTxHash (txid : "+rpcTx.txid+") "+e)
+                  case e: JsError => ApiLogs.error("Invalid result from ElasticSearch.getBlockFromTxHash (txid : "+rpcTx.txid+") "+e)
                 }
               }
               case Left(e) => Left(e)
@@ -337,7 +327,7 @@ object Neo4jBlockchainIndexer {
               force match {
                 case true => restart(ticker)
                 case false => {
-                  Logger.error("No blocks found, can't resume")
+                  ApiLogs.error("No blocks found, can't resume")
                   Future(Left(new Exception("No blocks found, can't resume")))
                 }
               }
