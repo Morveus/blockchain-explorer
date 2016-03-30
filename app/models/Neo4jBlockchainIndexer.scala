@@ -155,23 +155,6 @@ object Neo4jBlockchainIndexer {
     }
   }
 
-  /*
-  private def exploreTransactionsSync(ticker:String, block:Block, currentTx: Int = 0):Future[Either[Exception,String]] = {
-    getTransaction(ticker, block.tx(currentTx), Some(block)).flatMap { response =>
-      response match {
-        case Right(s) => {
-          if(currentTx + 1 < block.tx.size){
-            exploreTransactionsSync(ticker, block, currentTx + 1)
-          }else{
-            Future(Right("block '"+block.hash+"' transactions added"))
-          }
-        }
-        case Left(e) => Future(Left(e))
-      }
-    }
-  }
-  */
-
   private def exploreTransactionsAsync(ticker:String, block:RPCBlock, currentPool:Int = 0):Future[Either[Exception,String]] = {
     var resultsFuts: ListBuffer[Future[Either[Exception,String]]] = ListBuffer()
 
@@ -220,57 +203,42 @@ object Neo4jBlockchainIndexer {
     }else{
       val rpcRequestRaw = Json.obj("jsonrpc" -> "1.0",
                               "method" -> "getrawtransaction",
-                              "params" -> Json.arr(txHash))
+                              "params" -> Json.arr(txHash, 1))
 
       val (url, user, pass) = this.connectionParameters(ticker)
 
       WS.url(url).withAuth(user, pass, WSAuthScheme.BASIC).post(rpcRequestRaw).flatMap { response =>
         val rpcResult = Json.parse(response.body)
-        (rpcResult \ "result").validate[String] match {
-          case raw: JsSuccess[String] => {
-            val rpcRequestDecoded = Json.obj("jsonrpc" -> "1.0",
-                                              "method" -> "decoderawtransaction",
-                                              "params" -> Json.arr(raw.get))
-            WS.url(url).withAuth(user, pass, WSAuthScheme.BASIC).post(rpcRequestDecoded).flatMap { response =>
-              //println(response.body)
-              val rpcResult = Json.parse(response.body)
-              (rpcResult \ "result") match {
-                case JsNull => {
-                  Logger.error("Transaction '"+txHash+"' not found")
-                  Future(Left(new Exception("Transaction '"+txHash+"' not found")))
-                }
-                case result: JsObject => {
-                  result.validate[RPCTransaction] match {
-                    case t: JsSuccess[RPCTransaction] => {
-                      val tx = t.get
-
-                      this.indexTransaction(ticker, tx, block).map { response =>
-                        response match {
-                          case Right(s) => {
-                            Logger.debug(s) //TX added
-                            Right(s)
-                          }
-                          case Left(e) => Left(e)
-                        }
-                        
-                      }
-                    }
-                    case e: JsError => {
-                      Logger.error("Invalid transaction '"+txHash+"' from RPC : "+response.body)
-                      Future(Left(new Exception("Invalid transaction '"+txHash+"' from RPC : "+response.body)))
-                    } 
-                  }
-                }
-                case _ => {
-                  Logger.error("Invalid transaction '"+txHash+"' result from RPC : "+response.body)
-                  Future(Left(new Exception("Invalid transaction '"+txHash+"' result from RPC : "+response.body)))
-                }
-              }
-            }
-          }
-          case e: JsError => {
+        (rpcResult \ "result") match {
+          case JsNull => {
             Logger.error("Transaction '"+txHash+"' not found")
             Future(Left(new Exception("Transaction '"+txHash+"' not found")))
+          }
+          case result: JsObject => {
+            result.validate[RPCTransaction] match {
+              case t: JsSuccess[RPCTransaction] => {
+                val tx = t.get
+
+                this.indexTransaction(ticker, tx, block).map { response =>
+                  response match {
+                    case Right(s) => {
+                      Logger.debug(s) //TX added
+                      Right(s)
+                    }
+                    case Left(e) => Left(e)
+                  }
+                  
+                }
+              }
+              case e: JsError => {
+                Logger.error("Invalid transaction '"+txHash+"' from RPC : "+response.body)
+                Future(Left(new Exception("Invalid transaction '"+txHash+"' from RPC : "+response.body)))
+              } 
+            }
+          }
+          case _ => {
+            Logger.error("Invalid transaction '"+txHash+"' result from RPC : "+response.body)
+            Future(Left(new Exception("Invalid transaction '"+txHash+"' result from RPC : "+response.body)))
           }
         }
       }
@@ -350,252 +318,7 @@ object Neo4jBlockchainIndexer {
         finalizeTransaction
       }
   }
-  /*
-  def finalizeSpent(ticker:String):Future[Either[Exception,String]] = {
-    finalizePageSpent(ticker).flatMap { response =>
-      response match {
-        case Right(next) => {
-          next match {
-            case true => {
-              finalizeSpent(ticker)
-            }
-            case false => Future(Right("finalizeSpent finished"))
-          }
-        }
-        case Left(e) => Future(Left(e))
-      }
-    }
-  }
-
-  private def finalizePageSpent(ticker:String):Future[Either[Exception,Boolean]] = {
-    var resultsFuts: ListBuffer[Future[Either[Exception,String]]] = ListBuffer()
-
-    class BlockchainParserInput(var tx_hash:String, var input_index:Long, var output_index:Long, var value:Option[Long], var addresses:Option[List[String]])
-
-    var inputsList = List[BlockchainParserInput]()
-    var outputsHashes:Map[String, List[Int]] = Map()
-    var outputsHashesJson:Map[String, JsValue] = Map()
-    var txHashes:Map[String, List[Int]] = Map()
-    var txHashesJson:Map[String, ESTransaction] = Map()
-
-
-    def explorePoolOutputs(poolsOutputsHashes: List[Map[String, List[Int]]], currentPool: Int = 0):Future[Either[Exception,String]] = {
-      var resultsFuts: ListBuffer[Future[Either[Exception,String]]] = ListBuffer()
-
-        
-        for((outputHash, inputsListIndexes) <- poolsOutputsHashes(currentPool)){
-          resultsFuts += ElasticSearch.getTransaction(ticker, outputHash).map { result =>
-            result match {
-              case Right(s) => {
-                s.validate[ESTransaction] match {
-                  case t: JsSuccess[ESTransaction] => {
-                    var inputTx = t.get
-
-                    outputsHashesJson(outputHash) = Json.toJson(inputTx)
-
-                    for(inputsListIndex <- inputsListIndexes){
-                      var inputIndex = inputsList(inputsListIndex).input_index
-                      var outputIndex = inputsList(inputsListIndex).output_index
-                      val output = inputTx.outputs(outputIndex.toInt)
-                      inputsList(inputsListIndex).value = Some(output.value)
-                      inputsList(inputsListIndex).addresses = output.addresses
-                    }
-
-                    Right("")             
-                  }
-                  case e: JsError => {
-                    Logger.error("Invalid result from ElasticSearch.getTransaction("+ticker+", "+outputHash+") : "+e)
-                    Left(new Exception("Invalid result from ElasticSearch.getTransaction("+ticker+", "+outputHash+") : "+e))
-                  }
-                }
-              }
-              case Left(e) => Left(e)
-            }
-
-          }
-        }
-      
-
-      if(resultsFuts.size > 0) {
-        val futuresResponses: Future[ListBuffer[Either[Exception,String]]] = Future.sequence(resultsFuts)
-        futuresResponses.flatMap { responses =>
-          var returnEither:Either[Exception,String] = Right("")
-          for(response <- responses){
-            response match {
-              case Right(s) => 
-              case Left(e) => {
-                returnEither = Left(e)
-              }
-            }
-          }
-
-          returnEither match {
-            case Right(s) => {
-              if(currentPool + 1 < poolsOutputsHashes.size){
-                explorePoolOutputs(poolsOutputsHashes, currentPool+1)
-              }else{
-                Future(Right(""))
-              }
-            }
-            case Left(e) => Future(Left(e))
-          }
-        }
-      }else{
-        Future(Right(""))
-      }
-    }
-
-    def setPoolSpentBy(poolsSpentBy:List[Map[String, JsValue]], currentPool:Int=0):Future[Either[Exception,String]] = {
-      var resultsFuts: ListBuffer[Future[Either[Exception,String]]] = ListBuffer()
-      for((hash, json) <- poolsSpentBy(currentPool)){
-        var updatedTx = json
-
-        for(inputsListIndex <- outputsHashes(hash)){
-          var outputIndex = inputsList(inputsListIndex).output_index
-          var tx_hash = inputsList(inputsListIndex).tx_hash
-          val jsonTransformer = (__ \ 'outputs).json.update( 
-            __.read[JsArray].map { a => 
-              JsArray(a.value.updated(outputIndex.toInt, a(outputIndex.toInt).as[JsObject] ++ Json.obj("spent_by" -> tx_hash)))
-            }
-          )
-          updatedTx = updatedTx.transform(jsonTransformer).get
-        }
-
-        resultsFuts += ElasticSearch.set(ticker, "transaction", hash, Json.toJson(updatedTx)).map { response =>
-          Right("")
-        }
-      }
-
-
-      if(resultsFuts.size > 0) {
-        val futuresResponses: Future[ListBuffer[Either[Exception,String]]] = Future.sequence(resultsFuts)
-        futuresResponses.flatMap { responses =>
-          var returnEither:Either[Exception,String] = Right("")
-          for(response <- responses){
-            response match {
-              case Right(s) => 
-              case Left(e) => {
-                returnEither = Left(e)
-              }
-            }
-          }
-
-          returnEither match {
-            case Right(s) => {
-              if(currentPool + 1 < poolsSpentBy.size){
-                setPoolSpentBy(poolsSpentBy, currentPool+1)
-              }else{
-                Future(Right(""))
-              }
-            }
-            case Left(e) => Future(Left(e))
-          }
-        }
-      }else{
-        Future(Right(""))
-      }
-    }
-
-    //Récupère toute les txs par date
-    var esSize = 150
-    ElasticSearch.getNotFinalizedTransactions(ticker, esSize).flatMap { result =>
-      result match {
-        case Right(s) => {
-          var (truncated, jsResult) = s
-          jsResult.validate[List[ESTransaction]] match {
-            case r: JsSuccess[List[ESTransaction]] => {
-              var txs = r.get          
-              for(tx <- txs){
-                Logger.debug("TX: "+tx.hash+"...")
-                txHashesJson(tx.hash) = tx
-                for(in <- tx.inputs){
-                  inputsList = inputsList :+ new BlockchainParserInput(tx.hash, in.input_index.get, in.output_index.get, None, None)
-                  outputsHashes.contains(in.output_hash.get) match {
-                    case true => {
-                      var listPrev:List[Int] = outputsHashes(in.output_hash.get)
-                      outputsHashes(in.output_hash.get) = listPrev :+ (inputsList.size - 1)
-                    }
-                    case false => {
-                      outputsHashes(in.output_hash.get) = List(inputsList.size - 1)
-                    }
-                  }
-                  txHashes.contains(tx.hash) match {
-                    case true => {
-                      var listPrev:List[Int] = txHashes(tx.hash)
-                      txHashes(tx.hash) = listPrev :+ (inputsList.size - 1)
-                    }
-                    case false => {
-                      txHashes(tx.hash) = List(inputsList.size - 1)
-                    }
-                  }
-                }
-              }
-
-              if(outputsHashes.size > 0){
-                val poolsOutputsHashes:List[Map[String, List[Int]]] = outputsHashes.grouped(elasticSearchMaxQueries).toList
-                explorePoolOutputs(poolsOutputsHashes, 0).flatMap { response =>
-                  //Pour chaque output, on set le spent_by:
-                  val poolsSpentBy = outputsHashesJson.grouped(elasticSearchMaxQueries).toList
-                  setPoolSpentBy(poolsSpentBy, 0).flatMap { response =>
-
-                    var resultsFuts: ListBuffer[Future[Either[Exception,String]]] = ListBuffer()
-
-                    //Pour chaque input, on set la value & addresses:
-                    for((txHash, listI) <- txHashes){
-                      
-                      var updatedTx = Json.toJson(txHashesJson(txHash))
-                      for(i <- listI){
-                        var input =  inputsList(i)
-                        val jsonTransformer = (__ \ 'inputs).json.update( 
-                          __.read[JsArray].map { a => 
-                            JsArray(a.value.updated(input.input_index.toInt, a(input.input_index.toInt).as[JsObject] ++ Json.obj("value" -> input.value) 
-                                                                                                                      ++ Json.obj("addresses" -> input.addresses)))
-                          }
-                        )
-                        updatedTx = updatedTx.transform(jsonTransformer).get
-                        
-                      }
-                      resultsFuts += ElasticSearch.set(ticker, "transaction", txHash, updatedTx)
-                    }
-
-                    if(resultsFuts.size > 0) {
-                      val futuresResponses: Future[ListBuffer[Either[Exception,String]]] = Future.sequence(resultsFuts)
-                      futuresResponses.map { responses =>
-                        var returnEither:Either[Exception,Boolean] = Right(truncated)
-                        for(response <- responses){
-                          response match {
-                            case Right(s) => 
-                            case Left(e) => {
-                              returnEither = Left(e)
-                            }
-                          }
-                        }
-
-                        returnEither
-                      }
-                    }else{
-                      Future(Right(truncated))
-                    }
-
-                  }  
-        
-                }
-              }else{
-                Future(Right(false))
-              }
-
-            }
-            case e: JsError => {
-              Logger.error("Invalid result from ElasticSearch.getNotFinalizedTransactions("+ticker+", "+esSize+") : "+e)
-              Future(Left(new Exception("Invalid result from ElasticSearch.getNotFinalizedTransactions("+ticker+", "+esSize+") : "+e)))
-            }
-          }
-        }
-        case Left(e) => Future(Left(e))
-      }
-    }
-  }
-  */
+  
 
   def startAt(ticker:String, fromBlockHash:String):Future[Either[Exception,String]] = {
     getBlock(ticker, fromBlockHash)
