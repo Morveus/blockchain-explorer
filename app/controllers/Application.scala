@@ -19,7 +19,6 @@ object Application extends Controller {
 
   def getBalance(ticker: String, addresses: String) = Action.async {
     val addressesList:List[String] = addresses.split(",").toList
-    BlockchainExplorer.getBalance(ticker, addressesList).map { result =>
     Ok
     }
   }
