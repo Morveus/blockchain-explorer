@@ -16,10 +16,4 @@ object Application extends Controller {
   def index = Action {     
     Ok
   }
-
-  def getBalance(ticker: String, addresses: String) = Action.async {
-    val addressesList:List[String] = addresses.split(",").toList
-    Ok
-    }
-  }
 }
