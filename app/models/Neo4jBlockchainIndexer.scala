@@ -309,6 +309,9 @@ object Neo4jBlockchainIndexer {
       }
   }
   
+  def checkBlockReorg() = {
+    
+  }
 
   def startAt(ticker:String, fromBlockHash:String):Future[Either[Exception,String]] = {
     getBlock(ticker, fromBlockHash)

@@ -21,7 +21,7 @@ object Neo4j {
   val config = play.api.Play.configuration
  
 
-  private def connect(ticker:String, requestTimeOut:Option[Int] = None) = {
+  private def connect(ticker:String, requestTimeOut:Option[Int] = Some(120000)) = {
     val neo4jUrl = config.getString("coins."+ticker+".neo4j.url").get
     val neo4jPort = config.getInt("coins."+ticker+".neo4j.port").get
     val neo4jUser = config.getString("coins."+ticker+".neo4j.user").get
@@ -42,6 +42,29 @@ object Neo4j {
     val connection = Neo4jREST(neo4jUrl, neo4jPort, "/db/data/", neo4jUser, neo4jPass)(wsclient)
 
     (wsclient, connection)
+  }
+
+  def setConstraints(ticker: String):Future[Either[Exception,String]] = {
+    Future {
+      var query = """
+        CREATE CONSTRAINT ON (b:Block) ASSERT b.hash IS UNIQUE
+        CREATE CONSTRAINT ON (tx:Transaction) ASSERT tx.hash IS UNIQUE
+        CREATE CONSTRAINT ON (addr:Adresse) ASSERT addr.address IS UNIQUE
+      """
+      val cypherQuery = Cypher(query)
+
+      implicit val (wsclient, connection) = connect(ticker)
+      val success = cypherQuery.execute()
+      wsclient.close()
+
+      success match {
+        case true => Right("Constraints added")
+        case false => {
+          ApiLogs.debug(query)
+          Left(new Exception("Error : Neo4j.setConstraints("+ticker+") not inserted"))
+        }
+      }
+    }
   }
 
   def addBlock(ticker:String, block:NeoBlock, previousBlockHash:Option[String]):Future[Either[Exception,String]] = {
@@ -89,7 +112,23 @@ object Neo4j {
     }
   }
 
-  def addTransaction(ticker:String, tx:NeoTransaction, blockHash:String, inputs:Map[Int, NeoInput], outputs:Map[Int, NeoOutput]):Future[Either[Exception,String]] = {
+  def addTransaction(ticker:String, tx:NeoTransaction, blockHash:String, inputs:Map[Int, NeoInput], outputs:Map[Int, NeoOutput], attempt:Int = 1):Future[Either[Exception,String]] = {
+    addTransactionAttempt(ticker, tx, blockHash, inputs, outputs).flatMap { result =>
+      result match {
+        case Left(e) => {
+          if(attempt < 3){
+            Thread.sleep(2000)
+            addTransaction(ticker, tx, blockHash, inputs, outputs, attempt + 1)
+          }else{
+            Future(Left(e))
+          }
+        }
+        case Right(s) => Future(Right(s))
+      }
+    }
+  }
+
+  def addTransactionAttempt(ticker:String, tx:NeoTransaction, blockHash:String, inputs:Map[Int, NeoInput], outputs:Map[Int, NeoOutput]):Future[Either[Exception,String]] = {
     val neo4jMaxQueries = config.getInt("coins."+ticker+".neo4j.maxQueries").get
     Future { 
 
@@ -181,15 +220,18 @@ object Neo4j {
 
       var results = ListBuffer[Boolean]()
       var temp:Boolean = false
+      var crashedQuery:Option[Int] = None
       implicit val (wsclient, connection) = connect(ticker)
       breakable {
         for((cypherQuery, i) <- cypherQueries.zipWithIndex){
+          if(cypherQueries.size > 1){
+            ApiLogs.debug("Query n°"+i+"/"+cypherQueries.size.toString+"...")
+          }   
           temp = cypherQuery.execute()
           results += temp
-          if(cypherQueries.size > 1){
-            ApiLogs.debug("Query n°"+i+"/"+cypherQueries.size.toString)
-          }          
+                 
           if(temp == false){
+            crashedQuery = Some(i)
             break
           }
         }
@@ -199,9 +241,13 @@ object Neo4j {
 
       results.contains(false) match {
         case true => {
+
           ApiLogs.debug(fullQuery)
-          ApiLogs.debug(params.toString)  
-          Left(new Exception("Error : Neo4j.addTransaction("+ticker+","+tx+","+blockHash+", "+inputs+", "+outputs+") not inserted"))
+          ApiLogs.debug(params.toString)
+          ApiLogs.debug("============")
+          ApiLogs.debug(cypherQueries(crashedQuery.get).query)
+
+          Left(new Exception("Error : Neo4j.addTransaction("+ticker+","+tx+","+blockHash+", "+inputs+", "+outputs+") not inserted"))    
         }
         case false => Right("Transaction added")//Right("Transaction added")//Left(new Exception("Transaction added"))
       }
