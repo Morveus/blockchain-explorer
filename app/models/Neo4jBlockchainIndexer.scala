@@ -350,7 +350,10 @@ object Neo4jBlockchainIndexer {
   def restart(ticker:String):Future[Either[Exception,String]] = {
     //on recommence l'indexation à partir du block genesis
     val genesisBlock = config.getString("coins."+ticker+".genesisBlock").get
-    startAt(ticker, genesisBlock)
+    Neo4j.setConstraints(ticker).flatMap { result =>
+      startAt(ticker, genesisBlock)
+    }
+    
   }
 
 

@@ -46,21 +46,34 @@ object Neo4j {
 
   def setConstraints(ticker: String):Future[Either[Exception,String]] = {
     Future {
-      var query = """
+      var query1 = """
         CREATE CONSTRAINT ON (b:Block) ASSERT b.hash IS UNIQUE
+      """
+      var query2 = """
         CREATE CONSTRAINT ON (tx:Transaction) ASSERT tx.hash IS UNIQUE
+      """
+      var query3 = """
         CREATE CONSTRAINT ON (addr:Adresse) ASSERT addr.address IS UNIQUE
       """
-      val cypherQuery = Cypher(query)
+
+      val cypherQuery1 = Cypher(query1)
+      val cypherQuery2 = Cypher(query2)
+      val cypherQuery3 = Cypher(query3)
+
+
 
       implicit val (wsclient, connection) = connect(ticker)
-      val success = cypherQuery.execute()
+      val success1 = cypherQuery1.execute()
+      val success2 = cypherQuery2.execute()
+      val success3 = cypherQuery3.execute()
       wsclient.close()
 
-      success match {
-        case true => Right("Constraints added")
-        case false => {
-          ApiLogs.debug(query)
+      (success1, success2, success3) match {
+        case (true, true, true) => Right("Constraints added")
+        case _ => {
+          ApiLogs.debug(query1)
+          ApiLogs.debug(query2)
+          ApiLogs.debug(query3)
           Left(new Exception("Error : Neo4j.setConstraints("+ticker+") not inserted"))
         }
       }
