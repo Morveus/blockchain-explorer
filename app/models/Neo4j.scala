@@ -181,9 +181,9 @@ object Neo4j {
           case None => {
             queriesPool += """
               MERGE (in"""+inIndex+""":Input { input_index: """+inIndex+""" })-[:SUPPLIES]->(tx)
-              MERGE (inOut"""+inIndex+"""Tx:Transaction { hash: '"""+input.output_tx_hash.get+"""' })
-              MERGE (inOut"""+inIndex+""":Output { output_index: """+input.output_index.get+"""})<-[:EMITS]-(inOut"""+inIndex+"""Tx)
-              MERGE (in"""+inIndex+""":Input)<-[:IS_SPENT_BY]-(inOut"""+inIndex+""")
+              ON CREATE SET
+                in"""+inIndex+""".output_hash= '"""+input.output_tx_hash.get+"""',
+                in"""+inIndex+""".output_index= '"""+input.output_index.get+"""'
             """
           }
         }
