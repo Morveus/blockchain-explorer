@@ -187,7 +187,8 @@ object Neo4jBlockchainIndexer {
 
 
   private def getTransaction(ticker:String, txHash:String, block:Option[RPCBlock] = None):Future[Either[Exception,String]] = {
-    if(txHash == "97ddfbbae6be97fd6cdf3e7ca13232a3afff2353e29badfab7f73011edd4ced9"){
+    val genesisTx = config.getString("coins."+ticker+".genesisTransaction").get
+    if(txHash == genesisTx){
       /* Block genesis */
       Future(Right("genesis block"))
     }else{

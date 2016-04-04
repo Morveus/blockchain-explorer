@@ -337,24 +337,27 @@ object Neo4j {
 
 
   def getBlock(ticker:String, blockHash:String) = {
-    implicit val (wsclient, connection) = connect(ticker)
 
-
-    val query = Cypher("""
+    val query = """
       MATCH (b:Block { hash:{blockHash} })
       RETURN b.hash
-    """).on("blockHash" -> blockHash)
+    """
+
+    val cypherQuery = Cypher(query).on("blockHash" -> blockHash)
+    implicit val (wsclient, connection) = connect(ticker)
+    val blockResult = cypherQuery.apply().head
+    wsclient.close()
+    val block = blockResult[String]("b.hash")
 
     /*
     val block = query.apply().map(row => 
       row[String]("b.hash") -> row[Int]("b.height")
-    ).toList*/
-    val blockResult = query.apply().head
-    val block = blockResult[String]("b.hash")
+    ).toList
+    */
 
     println(block)
 
-    wsclient.close()
+    
 	}
 
   
