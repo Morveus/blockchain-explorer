@@ -88,15 +88,42 @@ object Neo4jBlockchainIndexer {
 
               indexBlock(ticker, block, rpcBlock.previousblockhash).flatMap { response =>
                 response match {
-                  case Right(s) => {
-                    ApiLogs.debug(s) //Block added
+                  case Right(q) => {
+                    //ApiLogs.debug(s) //Block added
+                    ApiLogs.debug("Block '"+rpcBlock.hash+"' added !") 
 
-                    exploreTransactionsAsync(ticker, rpcBlock).flatMap { response =>
+                    import java.io._
+                    val fw = new FileWriter("/home/ledger/test.txt", true)
+                    try {
+                      for(txBatch <- b){
+                        fw.write(q)
+                      }
+                    } finally {
+                      fw.close()
+                    }
+
+                    exploreTransactionsAsync(ticker, rpcBlock, 0).flatMap { response =>
                      response match {
-                       case Right(s) => {
+                       case Right(b) => {
+
+                        
+                          val fw = new FileWriter("/home/ledger/test.txt", true)
+                          try {
+                            for(txBatch <- b){
+                              fw.write(txBatch.query)
+                            }
+                          } finally {
+                            fw.close()
+                          }
+                         
                           rpcBlock.nextblockhash match {
                             case Some(nextblockhash) => {
-                              getBlock(ticker, nextblockhash)
+                              if(rpcBlock.height <= 10000){
+                                getBlock(ticker, nextblockhash)
+                                }else{
+                                   Future(Right("Blocks synchronized !"))
+                                }
+                              
                             }
                             case None => {
                               ApiLogs.debug("Blocks synchronized !")
@@ -134,19 +161,19 @@ object Neo4jBlockchainIndexer {
 
   private def indexBlock(ticker:String, block:NeoBlock, previousBlockHash:Option[String]):Future[Either[Exception,String]] = {
     Neo4j.addBlock(ticker, block, previousBlockHash).map { response =>
-      response match {
+      response /* match {
         case Right(s) => {
           Right("Block '"+block.hash+"' added !")
         }
         case Left(e) => Left(e)
-      }
+      }*/
     } recover {
       case e:Exception => Left(e)
     }
   }
 
-  private def exploreTransactionsAsync(ticker:String, block:RPCBlock, currentPool:Int = 0):Future[Either[Exception,String]] = {
-    var resultsFuts: ListBuffer[Future[Either[Exception,String]]] = ListBuffer()
+  private def exploreTransactionsAsync(ticker:String, block:RPCBlock, currentPool:Int, batch:ListBuffer[TxBatch] = ListBuffer[TxBatch]()):Future[Either[Exception,ListBuffer[TxBatch]]] = {
+    var resultsFuts: ListBuffer[Future[Either[Exception,TxBatch]]] = ListBuffer()
 
     val txNb = block.tx.length
     val poolsTxs = block.tx.grouped(maxqueries).toList
@@ -156,12 +183,14 @@ object Neo4jBlockchainIndexer {
     }
 
     if(resultsFuts.size > 0) {
-      val futuresResponses: Future[ListBuffer[Either[Exception,String]]] = Future.sequence(resultsFuts)
+      val futuresResponses: Future[ListBuffer[Either[Exception,TxBatch]]] = Future.sequence(resultsFuts)
       futuresResponses.flatMap { responses =>
         var returnEither:Either[Exception,String] = Right("Block '"+block.hash+"' transactions added")
         for(response <- responses){
           response match {
-            case Right(s) => 
+            case Right(b) => {
+              batch += b
+            }
             case Left(e) => {
               returnEither = Left(e)
             }
@@ -171,9 +200,19 @@ object Neo4jBlockchainIndexer {
         returnEither match {
           case Right(s) => {
             if(currentPool + 1 < poolsTxs.size){
-              exploreTransactionsAsync(ticker, block, currentPool + 1)
+              exploreTransactionsAsync(ticker, block, currentPool + 1, batch).map { result =>
+                result match {
+                  case Right(b) => {
+                    batch +: b
+                    Right(batch)
+                  }
+                  case Left(e) => {
+                    Left(e)
+                  }
+                }
+              }
             }else{
-              Future(Right("Block '"+block.hash+"' transactions added"))
+              Future(Right(batch))
             }
           }
           case Left(e) => Future(Left(e))
@@ -181,16 +220,16 @@ object Neo4jBlockchainIndexer {
 
       }
     }else{
-      Future(Right("No block '"+block.hash+"' transactions to add"))
+      Future(Right(batch))
     }     
   }
 
 
-  private def getTransaction(ticker:String, txHash:String, block:Option[RPCBlock] = None):Future[Either[Exception,String]] = {
+  private def getTransaction(ticker:String, txHash:String, block:Option[RPCBlock] = None):Future[Either[Exception,TxBatch]] = {
     val genesisTx = config.getString("coins."+ticker+".genesisTransaction").get
     if(txHash == genesisTx){
       /* Block genesis */
-      Future(Right("genesis block"))
+      Future(Right(new TxBatch(genesisTx, ListBuffer(), "")))
     }else{
       val rpcRequestRaw = Json.obj("jsonrpc" -> "1.0",
                               "method" -> "getrawtransaction",
@@ -211,13 +250,13 @@ object Neo4jBlockchainIndexer {
                 val tx = t.get
 
                 this.indexTransaction(ticker, tx, block).map { response =>
-                  response match {
+                  response /* match {
                     case Right(s) => {
-                      ApiLogs.debug(s) //TX added
+                      //ApiLogs.debug(s) //TX added
                       Right(s)
                     }
                     case Left(e) => Left(e)
-                  }
+                  }*/
                   
                 }
               }
@@ -236,7 +275,7 @@ object Neo4jBlockchainIndexer {
     }
   }
 
-  private def indexTransaction(ticker:String, rpcTx:RPCTransaction, rpcBlock:Option[RPCBlock] = None):Future[Either[Exception,String]] = {
+  private def indexTransaction(ticker:String, rpcTx:RPCTransaction, rpcBlock:Option[RPCBlock] = None):Future[Either[Exception,TxBatch]] = {
 
       //on récupère les informations qui nous manquent concernant la transaction
       var resultsFuts: ListBuffer[Future[Unit]] = ListBuffer()
@@ -287,16 +326,16 @@ object Neo4jBlockchainIndexer {
         outputs(vout.n.toInt) = NeoOutput(vout.n.toInt, satoshi(vout.value), vout.scriptPubKey.hex, vout.scriptPubKey.addresses.getOrElse(List[String]()))
       }      
 
-      def finalizeTransaction:Future[Either[Exception,String]] = {
+      def finalizeTransaction:Future[Either[Exception,TxBatch]] = {
         val tx = NeoTransaction(rpcTx.txid, block.time, rpcTx.locktime, None, None)
 
-        Neo4j.addTransaction(ticker, tx, block.hash, inputs, outputs).map { response =>
-          response match {
+        Neo4j.tempAddTxFile(ticker, tx, block.hash, inputs, outputs).map { response =>
+          response /*match {
             case Right(s) => {
               Right("Transaction '"+rpcTx.txid+"' added !")
             }
             case Left(e) => Left(e)
-          }
+          }*/
         }
       }
 

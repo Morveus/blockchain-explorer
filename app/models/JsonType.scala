@@ -1,5 +1,6 @@
 package models
 
+import scala.collection.mutable.ListBuffer
 
 /*
   RPC data format
@@ -85,4 +86,12 @@ case class NeoOutput(
   value: Long,
   script_hex: String,
   addresses: List[String]
+)
+
+
+
+case class TxBatch(
+  txHash: String,
+  inputsTxs: ListBuffer[String],
+  query: String
 )

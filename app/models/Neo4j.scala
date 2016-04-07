@@ -84,44 +84,28 @@ object Neo4j {
     Future {
       
       var query = """
-        MERGE (b:Block { hash:{blockHash} })
+        MERGE (b:Block { hash: '"""+block.hash+"""' })
         ON CREATE SET 
-          b.height = {blockHeight},
-          b.time = {blockTime},
-          b.main_chain = {blockMainChain}
+          b.height = """+block.height+""",
+          b.time = """+block.time+""",
+          b.main_chain = """+block.main_chain+"""
       """
-      var params:Map[String, Any] = Map("blockHash" -> block.hash,
-                                        "blockHeight" -> block.height,
-                                        "blockTime" -> block.time,
-                                        "blockMainChain" -> block.main_chain
-                                      )
+     
 
       previousBlockHash match {
         case Some(prev) => {
           query = """
-            MATCH (prevBlock:Block { hash: {prevBlockHash} })
+            MATCH (prevBlock:Block { hash: '"""+prev+"""' })
           """+query+"""
             MERGE (b)-[:FOLLOWS]->(prevBlock)
           """
-          params("prevBlockHash") = prev
         }
         case None => /*Nothing*/
       }
 
-      val cypherQuery = Cypher(query).on(params.toSeq:_*)
+      query += """;"""
 
-      implicit val (wsclient, connection) = connect(ticker)
-      val success = cypherQuery.execute()
-      wsclient.close()
-
-      success match {
-        case true => Right("Block added")
-        case false => {
-          ApiLogs.debug(query)
-          ApiLogs.debug(params.toString)
-          Left(new Exception("Error : Neo4j.addBlock("+ticker+","+block+","+previousBlockHash+") not inserted"))
-        }
-      }
+      Right(query)
     }
   }
 
@@ -141,14 +125,73 @@ object Neo4j {
     }
   }
 
+  def tempAddTxFile(ticker:String, tx:NeoTransaction, blockHash:String, inputs:Map[Int, NeoInput], outputs:Map[Int, NeoOutput]):Future[Either[Exception,TxBatch]] = {
+    Future { 
+
+      var query = ""
+      var inputsTxs = ListBuffer[String]()
+
+      query += """
+        MATCH (b:Block { hash: '"""+blockHash+"""' })
+        MERGE (tx:Transaction { hash: '"""+tx.hash+"""' })
+        ON CREATE SET
+          tx.received_at = """+tx.received_at+""",
+          tx.lock_time = """+tx.lock_time+"""
+        MERGE (tx)<-[:CONTAINS]-(b)
+      """
+
+      for((inIndex, input) <- inputs.toSeq.sortBy(_._1)){
+        input.coinbase match {
+          case Some(c) => {
+            query += """
+              MERGE (in"""+inIndex+""":Input { input_index: """+inIndex+""" })-[:SUPPLIES]->(tx)
+              ON CREATE SET
+                in"""+inIndex+""".coinbase= '"""+c+"""'
+            """
+          }
+          case None => {
+            query += """
+              MERGE (in"""+inIndex+""":Input { input_index: """+inIndex+""" })-[:SUPPLIES]->(tx)
+              MERGE (inOut"""+inIndex+"""Tx:Transaction { hash: '"""+input.output_tx_hash.get+"""' })
+              MERGE (inOut"""+inIndex+""":Output { output_index: """+input.output_index.get+"""})<-[:EMITS]-(inOut"""+inIndex+"""Tx)
+              MERGE (in"""+inIndex+""":Input)<-[:IS_SPENT_BY]-(inOut"""+inIndex+""")
+            """
+            inputsTxs += input.output_tx_hash.get
+          }
+        }
+      } 
+
+
+      for((outIndex, output) <- outputs.toSeq.sortBy(_._1)){
+        query += """
+          MERGE (out"""+outIndex+""":Output { output_index: """+output.output_index+"""})<-[:EMITS]-(tx)
+          ON CREATE SET
+            out"""+outIndex+""".value= """+output.value+""",
+            out"""+outIndex+""".script_hex= '"""+output.script_hex+"""'
+        """
+
+        for(address <- output.addresses){
+          query += """
+            MERGE (out"""+outIndex+"""Addr:Address { address: '"""+address+"""' })
+            MERGE (out"""+outIndex+"""Addr)<-[:IS_SENT_TO]-(out"""+outIndex+""")
+          """
+        }
+      }
+      query += """;"""
+
+      Right(new TxBatch(tx.hash, inputsTxs, query))
+    } 
+  }
+
   def addTransactionAttempt(ticker:String, tx:NeoTransaction, blockHash:String, inputs:Map[Int, NeoInput], outputs:Map[Int, NeoOutput]):Future[Either[Exception,String]] = {
     val neo4jMaxQueries = config.getInt("coins."+ticker+".neo4j.maxQueries").get
     Future { 
 
       var queries = ListBuffer[ListBuffer[String]]()
       var queriesPool = ListBuffer[String]()
+
+      //        MATCH (b:Block { hash: {blockHash} })
       queriesPool += """
-        MATCH (b:Block { hash: {blockHash} })
         MERGE (tx:Transaction { hash:{txHash} })
         ON CREATE SET
           tx.received_at = {txReceivedAt},
