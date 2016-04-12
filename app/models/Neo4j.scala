@@ -46,37 +46,13 @@ object Neo4j {
 
   def setConstraints(ticker: String):Future[Either[Exception,String]] = {
     Future {
-      var query1 = """
-        CREATE CONSTRAINT ON (b:Block) ASSERT b.hash IS UNIQUE
-      """
-      var query2 = """
-        CREATE CONSTRAINT ON (tx:Transaction) ASSERT tx.hash IS UNIQUE
-      """
-      var query3 = """
-        CREATE CONSTRAINT ON (addr:Adresse) ASSERT addr.address IS UNIQUE
-      """
+      var query = """begin
+  CREATE CONSTRAINT ON (b:Block) ASSERT b.hash IS UNIQUE;
+  CREATE CONSTRAINT ON (tx:Transaction) ASSERT tx.hash IS UNIQUE;
+  CREATE CONSTRAINT ON (addr:Adresse) ASSERT addr.address IS UNIQUE;
+"""
 
-      val cypherQuery1 = Cypher(query1)
-      val cypherQuery2 = Cypher(query2)
-      val cypherQuery3 = Cypher(query3)
-
-
-
-      implicit val (wsclient, connection) = connect(ticker)
-      val success1 = cypherQuery1.execute()
-      val success2 = cypherQuery2.execute()
-      val success3 = cypherQuery3.execute()
-      wsclient.close()
-
-      (success1, success2, success3) match {
-        case (true, true, true) => Right("Constraints added")
-        case _ => {
-          ApiLogs.debug(query1)
-          ApiLogs.debug(query2)
-          ApiLogs.debug(query3)
-          Left(new Exception("Error : Neo4j.setConstraints("+ticker+") not inserted"))
-        }
-      }
+      Right(query)
     }
   }
 
@@ -84,26 +60,31 @@ object Neo4j {
     Future {
       
       var query = """
-        MERGE (b:Block { hash: '"""+block.hash+"""' })
-        ON CREATE SET 
-          b.height = """+block.height+""",
-          b.time = """+block.time+""",
-          b.main_chain = """+block.main_chain+"""
-      """
+  MERGE (b:Block { hash: '"""+block.hash+"""' })
+  ON CREATE SET 
+    b.height = """+block.height+""",
+    b.time = """+block.time+""",
+    b.main_chain = """+block.main_chain+"""
+  """
      
 
       previousBlockHash match {
         case Some(prev) => {
           query = """
-            MATCH (prevBlock:Block { hash: '"""+prev+"""' })
-          """+query+"""
-            MERGE (b)-[:FOLLOWS]->(prevBlock)
-          """
+  MATCH (prevBlock:Block { hash: '"""+prev+"""' })
+"""+query+"""
+  MERGE (b)-[:FOLLOWS]->(prevBlock)
+"""
         }
         case None => /*Nothing*/
       }
 
-      query += """;"""
+      query += ";"
+
+      query = """
+commit
+begin
+"""+query
 
       Right(query)
     }
@@ -132,30 +113,30 @@ object Neo4j {
       var inputsTxs = ListBuffer[String]()
 
       query += """
-        MATCH (b:Block { hash: '"""+blockHash+"""' })
-        MERGE (tx:Transaction { hash: '"""+tx.hash+"""' })
-        ON CREATE SET
-          tx.received_at = """+tx.received_at+""",
-          tx.lock_time = """+tx.lock_time+"""
-        MERGE (tx)<-[:CONTAINS]-(b)
-      """
+  MATCH (b:Block { hash: '"""+blockHash+"""' })
+  MERGE (tx:Transaction { hash: '"""+tx.hash+"""' })
+  ON CREATE SET
+    tx.received_at = """+tx.received_at+""",
+    tx.lock_time = """+tx.lock_time+"""
+  MERGE (tx)<-[:CONTAINS]-(b)
+"""
 
       for((inIndex, input) <- inputs.toSeq.sortBy(_._1)){
         input.coinbase match {
           case Some(c) => {
             query += """
-              MERGE (in"""+inIndex+""":Input { input_index: """+inIndex+""" })-[:SUPPLIES]->(tx)
-              ON CREATE SET
-                in"""+inIndex+""".coinbase= '"""+c+"""'
-            """
+  MERGE (in"""+inIndex+""":Input { input_index: """+inIndex+""" })-[:SUPPLIES]->(tx)
+  ON CREATE SET
+    in"""+inIndex+""".coinbase= '"""+c+"""'
+"""
           }
           case None => {
             query += """
-              MERGE (in"""+inIndex+""":Input { input_index: """+inIndex+""" })-[:SUPPLIES]->(tx)
-              MERGE (inOut"""+inIndex+"""Tx:Transaction { hash: '"""+input.output_tx_hash.get+"""' })
-              MERGE (inOut"""+inIndex+""":Output { output_index: """+input.output_index.get+"""})<-[:EMITS]-(inOut"""+inIndex+"""Tx)
-              MERGE (in"""+inIndex+""":Input)<-[:IS_SPENT_BY]-(inOut"""+inIndex+""")
-            """
+  MERGE (in"""+inIndex+""":Input { input_index: """+inIndex+""" })-[:SUPPLIES]->(tx)
+  MERGE (inOut"""+inIndex+"""Tx:Transaction { hash: '"""+input.output_tx_hash.get+"""' })
+  MERGE (inOut"""+inIndex+""":Output { output_index: """+input.output_index.get+"""})<-[:EMITS]-(inOut"""+inIndex+"""Tx)
+  MERGE (in"""+inIndex+""":Input)<-[:IS_SPENT_BY]-(inOut"""+inIndex+""")
+"""
             inputsTxs += input.output_tx_hash.get
           }
         }
@@ -164,20 +145,20 @@ object Neo4j {
 
       for((outIndex, output) <- outputs.toSeq.sortBy(_._1)){
         query += """
-          MERGE (out"""+outIndex+""":Output { output_index: """+output.output_index+"""})<-[:EMITS]-(tx)
-          ON CREATE SET
-            out"""+outIndex+""".value= """+output.value+""",
-            out"""+outIndex+""".script_hex= '"""+output.script_hex+"""'
-        """
+  MERGE (out"""+outIndex+""":Output { output_index: """+output.output_index+"""})<-[:EMITS]-(tx)
+  ON CREATE SET
+    out"""+outIndex+""".value= """+output.value+""",
+    out"""+outIndex+""".script_hex= '"""+output.script_hex+"""'
+"""
 
         for(address <- output.addresses){
           query += """
-            MERGE (out"""+outIndex+"""Addr:Address { address: '"""+address+"""' })
-            MERGE (out"""+outIndex+"""Addr)<-[:IS_SENT_TO]-(out"""+outIndex+""")
-          """
+  MERGE (out"""+outIndex+"""Addr:Address { address: '"""+address+"""' })
+  MERGE (out"""+outIndex+"""Addr)<-[:IS_SENT_TO]-(out"""+outIndex+""")
+"""
         }
       }
-      query += """;"""
+      query += ";"
 
       Right(new TxBatch(tx.hash, inputsTxs, query))
     } 

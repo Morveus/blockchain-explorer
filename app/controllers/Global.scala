@@ -12,7 +12,7 @@ object Global extends WithFilters(new GzipFilter(shouldGzip = (request, response
   override def onStart(app: Application) {
     ApiLogs.info("BlockchainExplorer API started")
 
-    Neo4jBlockchainIndexer.resume("ltc", true).map { response =>
+    Neo4jBlockchainIndexer.restart("ltc").map { response =>
       response match {
         case Right(s) => ApiLogs.debug("Neo4jBlockchainIndexer result : " + s)
         case Left(e) => ApiLogs.error("Neo4jBlockchainIndexer Exception : " + e.toString)

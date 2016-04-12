@@ -15,6 +15,10 @@ import scala.collection.mutable.{ListBuffer, Map}
 
 import com.ning.http.client.Realm.AuthScheme
 
+import java.io._
+
+import blockchains._
+
 
 object Neo4jBlockchainIndexer {
 
@@ -25,6 +29,15 @@ object Neo4jBlockchainIndexer {
   // if(elasticSearchMaxQueries < RPCMaxQueries){
   //   maxqueries = elasticSearchMaxQueries
   // }
+
+
+  var blockchainsList: Map[String, BlockchainAPI] = Map()
+  blockchainsList += ("btc" -> blockchains.BitcoinBlockchainAPI)
+  blockchainsList += ("ltc" -> blockchains.BitcoinBlockchainAPI)
+  blockchainsList += ("doge" -> blockchains.BitcoinBlockchainAPI)
+  blockchainsList += ("eth" -> blockchains.EthereumBlockchainAPI)
+
+
 
 
   implicit val blockReads             = Json.reads[RPCBlock]
@@ -43,6 +56,18 @@ object Neo4jBlockchainIndexer {
   implicit val esTransactionBlockReads  = Json.reads[NeoBlock ]
   implicit val esTransactionBlockWrites = Json.writes[NeoBlock ]
   
+
+  val dumpMaxTx:Int = config.getInt("dump.maxtx").get
+  var txDumped:Int = 0
+  var dumpFileNumber:Int = 0
+  private def dumpFile(ticker:String):String = {
+    val folder = config.getString("dump.folder")
+    folder match {
+      case Some(f) => f+"dump_"+ticker+"_"+dumpFileNumber+".cql"
+      case None => throw new Exception("'dump.folder' is missing in application.conf")
+    }
+    
+  }
 
   private def connectionParameters(ticker:String) = {
     val ipNode = config.getString("coins."+ticker+".ipNode")
@@ -72,9 +97,8 @@ object Neo4jBlockchainIndexer {
 
     val (url, user, pass) = this.connectionParameters(ticker)
 
-    WS.url(url).withAuth(user, pass, WSAuthScheme.BASIC).post(rpcRequest).flatMap { response =>
-      val rpcResult = Json.parse(response.body)
-      (rpcResult \ "result") match {
+    blockchainsList(ticker).getBlock(ticker, blockHash).flatMap { response =>
+      (response \ "result") match {
         case JsNull => {
           ApiLogs.error("Block '"+blockHash+"' not found")
           Future(Left(new Exception("Block '"+blockHash+"' not found")))
@@ -91,13 +115,9 @@ object Neo4jBlockchainIndexer {
                   case Right(q) => {
                     //ApiLogs.debug(s) //Block added
                     ApiLogs.debug("Block '"+rpcBlock.hash+"' added !") 
-
-                    import java.io._
-                    val fw = new FileWriter("/home/ledger/test.txt", true)
+                    val fw = new FileWriter(dumpFile(ticker), true)
                     try {
-                      for(txBatch <- b){
-                        fw.write(q)
-                      }
+                      fw.write(q)
                     } finally {
                       fw.close()
                     }
@@ -106,24 +126,36 @@ object Neo4jBlockchainIndexer {
                      response match {
                        case Right(b) => {
 
-                        
-                          val fw = new FileWriter("/home/ledger/test.txt", true)
+                          val fw = new FileWriter(dumpFile(ticker), true)
                           try {
                             for(txBatch <- b){
+                              //txDumped += 1
                               fw.write(txBatch.query)
                             }
                           } finally {
                             fw.close()
                           }
+
+                          val f = new File(dumpFile(ticker))
+                          if(f.length > 100000000){
+                            val fw = new FileWriter(dumpFile(ticker), true)
+                            try {
+                              fw.write("""commit""")
+                            } finally {
+                              fw.close()
+                            }
+                            dumpFileNumber += 1
+                            //txDumped = 0
+                          }                          
                          
                           rpcBlock.nextblockhash match {
                             case Some(nextblockhash) => {
-                              if(rpcBlock.height <= 10000){
-                                getBlock(ticker, nextblockhash)
-                                }else{
-                                   Future(Right("Blocks synchronized !"))
-                                }
-                              
+                              // if(rpcBlock.height <= 10000){
+                              //   getBlock(ticker, nextblockhash)
+                              //   }else{
+                              //      Future(Right("Blocks synchronized !"))
+                              //   }
+                              getBlock(ticker, nextblockhash)
                             }
                             case None => {
                               ApiLogs.debug("Blocks synchronized !")
@@ -146,14 +178,14 @@ object Neo4jBlockchainIndexer {
               }
             }
             case e: JsError => {
-              ApiLogs.error("Invalid block '"+blockHash+"' from RPC : "+response.body)
-              Future(Left(new Exception("Invalid block '"+blockHash+"' from RPC : "+response.body)))
+              ApiLogs.error("Invalid block '"+blockHash+"' from RPC : "+response)
+              Future(Left(new Exception("Invalid block '"+blockHash+"' from RPC : "+response)))
             }
           }
         }
         case _ => {
-          ApiLogs.error("Invalid block '"+blockHash+"' result from RPC : "+response.body)
-          Future(Left(new Exception("Invalid block '"+blockHash+"' result from RPC : "+response.body)))
+          ApiLogs.error("Invalid block '"+blockHash+"' result from RPC : "+response)
+          Future(Left(new Exception("Invalid block '"+blockHash+"' result from RPC : "+response)))
         }
       }
     }
@@ -181,6 +213,7 @@ object Neo4jBlockchainIndexer {
     for(tx <- poolsTxs(currentPool)){
       resultsFuts += getTransaction(ticker, tx, Some(block))
     }
+    //getTransactions(ticker, poolsTxs(currentPool), Some(block))
 
     if(resultsFuts.size > 0) {
       val futuresResponses: Future[ListBuffer[Either[Exception,TxBatch]]] = Future.sequence(resultsFuts)
@@ -223,8 +256,60 @@ object Neo4jBlockchainIndexer {
       Future(Right(batch))
     }     
   }
+  /*
+  private def getTransactions(ticker:String, txHashes:List[String], block:Option[RPCBlock] = None):Future[Either[Exception,TxBatch]] = {
+    val genesisTx = config.getString("coins."+ticker+".genesisTransaction").get
+    val rpcRequestRaw = Json.arr()
+    for(txHash <- txHashes){
+      if(txHash != genesisTx){
+        rpcRequestRaw :+ Json.obj(
+                        "method" -> "getrawtransaction",
+                        "params" -> Json.arr(txHash, 1))
+      } 
+    }
 
+    val (url, user, pass) = this.connectionParameters(ticker)
+    WS.url(url).withAuth(user, pass, WSAuthScheme.BASIC).post(rpcRequestRaw).flatMap { response =>
+      val rpcResult = Json.parse(response.body)
+      val results = (rpcResult \\ "result").map(_.as[JsValue])
 
+      for(result <- results){
+        result match {
+          case JsNull => {
+            ApiLogs.error("Transaction '' not found")
+            Future(Left(new Exception("Transaction '' not found")))
+          }
+          case res: JsObject => {
+            res.validate[RPCTransaction] match {
+              case t: JsSuccess[RPCTransaction] => {
+                val tx = t.get
+
+                this.indexTransaction(ticker, tx, block).map { response =>
+                  response /* match {
+                    case Right(s) => {
+                      //ApiLogs.debug(s) //TX added
+                      Right(s)
+                    }
+                    case Left(e) => Left(e)
+                  }*/
+                  
+                }
+              }
+              case e: JsError => {
+                ApiLogs.error("Invalid transaction '' from RPC : "+response.body)
+                Future(Left(new Exception("Invalid transaction '' from RPC : "+response.body)))
+              } 
+            }
+          }
+          case _ => {
+            ApiLogs.error("Invalid transaction '' result from RPC : "+response.body)
+            Future(Left(new Exception("Invalid transaction '' result from RPC : "+response.body)))
+          }
+        }
+      }
+    }
+  }
+  */
   private def getTransaction(ticker:String, txHash:String, block:Option[RPCBlock] = None):Future[Either[Exception,TxBatch]] = {
     val genesisTx = config.getString("coins."+ticker+".genesisTransaction").get
     if(txHash == genesisTx){
@@ -391,7 +476,18 @@ object Neo4jBlockchainIndexer {
     //on recommence l'indexation à partir du block genesis
     val genesisBlock = config.getString("coins."+ticker+".genesisBlock").get
     Neo4j.setConstraints(ticker).flatMap { result =>
-      startAt(ticker, genesisBlock)
+      result match {
+        case Right(s) => {
+          val fw = new FileWriter(dumpFile(ticker), true)
+          try {
+            fw.write(s)
+          } finally {
+            fw.close()
+          }
+          startAt(ticker, genesisBlock)
+        }
+        case Left(e) => Future(Left(e))
+      }
     }
     
   }
