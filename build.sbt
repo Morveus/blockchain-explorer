@@ -18,15 +18,16 @@ resolvers ++= Seq(
 
 
 libraryDependencies ++= Seq(
-  "org.anormcypher" %% "anormcypher" % "0.7.0"
+  "org.neo4j" % "neo4j-enterprise" % "2.3.3",
+  "org.scala-lang.modules" %% "scala-async" % "0.9.2"
 )
 
 
 libraryDependencies ++= Seq(
   cache,
   jdbc,
-  anorm,
   ws,
+  anorm,
   filters
 )
 

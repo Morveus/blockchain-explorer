@@ -6,4 +6,5 @@ target
 /.project
 /.settings
 /RUNNING_PID
+graph-db
 conf/application.conf
