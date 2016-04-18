@@ -15,7 +15,6 @@
 
 // import com.ning.http.client.Realm.AuthScheme
 
-
 // object Neo4jBlockchainIndexer {
 
 //   val config = play.api.Play.configuration

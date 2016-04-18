@@ -8,6 +8,8 @@ import org.neo4j.graphdb.factory.GraphDatabaseFactory
 import org.neo4j.graphdb.factory.GraphDatabaseSettings
 import org.neo4j.graphdb.GraphDatabaseService
 
+import scala.collection.JavaConversions._
+import enums._
 
 object Neo4jDatabase {
 	val graphDb: GraphDatabaseService = new GraphDatabaseFactory()
