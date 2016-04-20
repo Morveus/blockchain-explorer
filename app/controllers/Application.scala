@@ -14,6 +14,10 @@ import scala.util.{Success, Failure}
 object Application extends Controller {
 
   def index = Action {     
+  	var hello = new EmbeddedNeo4j()
+		hello.createDb()
+		hello.testInsert()
+        hello.shutDown()
     Ok
   }
 }

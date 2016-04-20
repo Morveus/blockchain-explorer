@@ -19,13 +19,13 @@ object Global extends WithFilters(new GzipFilter(shouldGzip = (request, response
 
     ApiLogs.info("BlockchainExplorer API started")
 
-    Neo4jDatabase.hello
+    //Neo4jDatabase.hello
   }
 
   override def onStop(app: Application) {
     ApiLogs.info("BlockchainExplorer API shutting down...")
     ApiLogs.info("Shutting down embedded graph database...")
 
-    Neo4jDatabase.graphDb.shutdown
+    //Neo4jDatabase.graphDb.shutdown
   }
 }
