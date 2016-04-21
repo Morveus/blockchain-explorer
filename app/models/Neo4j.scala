@@ -56,35 +56,34 @@ object Neo4j {
     }
   }
 
-  def addBlock(ticker:String, block:NeoBlock, previousBlockHash:Option[String]):Future[Either[Exception,String]] = {
+  def addBlock(ticker:String, block:NeoBlock, txHashes:List[String], previousBlockHash:Option[String]):Future[Either[Exception,String]] = {
     Future {
       
       var query = """
-  MERGE (b:Block { hash: '"""+block.hash+"""' })
-  ON CREATE SET 
-    b.height = """+block.height+""",
-    b.time = """+block.time+""",
-    b.main_chain = """+block.main_chain+"""
-  """
-     
-
+        MERGE (b:Block { hash: '"""+block.hash+"""' })
+        ON CREATE SET 
+          b.height = """+block.height+""",
+          b.time = """+block.time+""",
+          b.main_chain = """+block.main_chain+"""
+      """
       previousBlockHash match {
         case Some(prev) => {
           query = """
-  MATCH (prevBlock:Block { hash: '"""+prev+"""' })
-"""+query+"""
-  MERGE (b)-[:FOLLOWS]->(prevBlock)
-"""
+            MATCH (prevBlock:Block { hash: '"""+prev+"""' })
+          """+query+"""
+            MERGE (b)-[:FOLLOWS]->(prevBlock)
+          """
         }
         case None => /*Nothing*/
       }
 
-      query += ";"
+      for(txHash <- txHashes){
+        query += """
+          MERGE (tx:Transaction { hash: '"""+txHash+"""' })<-[:CONTAINS]-(b)
+        """
+      }
 
-      query = """
-commit
-begin
-"""+query
+      query += """RETURN b"""
 
       Right(query)
     }
@@ -116,7 +115,6 @@ begin
   MATCH (b:Block { hash: '"""+blockHash+"""' })
   MERGE (tx:Transaction { hash: '"""+tx.hash+"""' })
   ON CREATE SET
-    tx.received_at = """+tx.received_at+""",
     tx.lock_time = """+tx.lock_time+"""
   MERGE (tx)<-[:CONTAINS]-(b)
 """
@@ -175,13 +173,11 @@ begin
       queriesPool += """
         MERGE (tx:Transaction { hash:{txHash} })
         ON CREATE SET
-          tx.received_at = {txReceivedAt},
           tx.lock_time = {txLockTime}
         MERGE (tx)<-[:CONTAINS]-(b)
       """
       var params:Map[String, Any] = Map("blockHash" -> blockHash,
                                         "txHash" -> tx.hash,
-                                        "txReceivedAt" -> tx.received_at,
                                         "txLockTime" -> tx.lock_time
                                       )
 

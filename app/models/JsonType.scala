@@ -64,7 +64,7 @@ case class NeoBlock(
 
 case class NeoTransaction(
   hash: String,
-  received_at: Long,
+  //received_at: Long,
   lock_time: Long,
   fees: Option[Long],
   amount: Option[Long]

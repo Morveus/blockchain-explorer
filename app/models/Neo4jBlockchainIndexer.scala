@@ -110,51 +110,34 @@ object Neo4jBlockchainIndexer {
 
               val block = NeoBlock(rpcBlock.hash, rpcBlock.height, rpcBlock.time, true)
 
-              indexBlock(ticker, block, rpcBlock.previousblockhash).flatMap { response =>
+              indexBlock(ticker, block, rpcBlock.tx, rpcBlock.previousblockhash).flatMap { response =>
                 response match {
                   case Right(q) => {
-                    //ApiLogs.debug(s) //Block added
-                    ApiLogs.debug("Block '"+rpcBlock.hash+"' added !") 
-                    val fw = new FileWriter(dumpFile(ticker), true)
-                    try {
-                      fw.write(q)
-                    } finally {
-                      fw.close()
+                    ApiLogs.debug(q) //Block added
+                    //ApiLogs.debug("Block '"+rpcBlock.hash+"' added !") 
+
+                    rpcBlock.nextblockhash match {
+                      case Some(nextblockhash) => {
+                      	// if(nextblockhash == "4267a473cec9a1c30d09cbaa160c21d40fd4f2d88a3ca47d6b6d8dc252d0b3ae"){
+                      	// 		Future(Right("Blocks synchronized !"))
+                      	// 	}else{
+                      	// 		getBlock(ticker, nextblockhash)
+                      	// 	}
+                       getBlock(ticker, nextblockhash)
+                      }
+                      case None => {
+                        ApiLogs.debug("Blocks synchronized !")
+                        Future(Right("Blocks synchronized !"))
+                      }
                     }
 
+                    /*
                     exploreTransactionsAsync(ticker, rpcBlock, 0).flatMap { response =>
                      response match {
-                       case Right(b) => {
-
-                          val fw = new FileWriter(dumpFile(ticker), true)
-                          try {
-                            for(txBatch <- b){
-                              //txDumped += 1
-                              fw.write(txBatch.query)
-                            }
-                          } finally {
-                            fw.close()
-                          }
-
-                          val f = new File(dumpFile(ticker))
-                          if(f.length > 100000000){
-                            val fw = new FileWriter(dumpFile(ticker), true)
-                            try {
-                              fw.write("""commit""")
-                            } finally {
-                              fw.close()
-                            }
-                            dumpFileNumber += 1
-                            //txDumped = 0
-                          }                          
+                       case Right(b) => {                          
                          
                           rpcBlock.nextblockhash match {
                             case Some(nextblockhash) => {
-                              // if(rpcBlock.height <= 10000){
-                              //   getBlock(ticker, nextblockhash)
-                              //   }else{
-                              //      Future(Right("Blocks synchronized !"))
-                              //   }
                               getBlock(ticker, nextblockhash)
                             }
                             case None => {
@@ -168,7 +151,7 @@ object Neo4jBlockchainIndexer {
                         }
                       }                       
                     }
-
+                    */
                   }
                   case Left(e) => {
                     Future(Left(e))
@@ -191,19 +174,43 @@ object Neo4jBlockchainIndexer {
     }
   }
 
-  private def indexBlock(ticker:String, block:NeoBlock, previousBlockHash:Option[String]):Future[Either[Exception,String]] = {
-    Neo4j.addBlock(ticker, block, previousBlockHash).map { response =>
-      response /* match {
-        case Right(s) => {
-          Right("Block '"+block.hash+"' added !")
-        }
-        case Left(e) => Left(e)
-      }*/
+  private def indexBlock(ticker:String, block:NeoBlock, txHashes:List[String], previousBlockHash:Option[String]):Future[Either[Exception,String]] = {
+    EmbeddedNeo4j2.addBlock(ticker, block, txHashes, previousBlockHash).map { response =>
+      response
     } recover {
       case e:Exception => Left(e)
     }
   }
 
+  def completeTransaction(ticker:String):Future[Either[Exception,String]] = {
+    val genesisTx = config.getString("coins."+ticker+".genesisTransaction").get
+  	EmbeddedNeo4j2.getUnprocessedTransaction(ticker, List(genesisTx)).flatMap { response =>
+  		response match {
+  			case Right(txHash) => {
+  				if(txHash == ""){
+  					Future(Right("completeTransaction ended"))
+  				}else{
+	  				getTransaction(ticker, txHash).flatMap { response =>
+				  		response match {
+				        case Right(r) => {
+				          ApiLogs.debug(r) //Tx added
+				          completeTransaction(ticker)
+				        }
+				        case Left(e) => {
+				          Future(Left(e))
+				        }
+				  		}
+				  	}
+				  }
+  			}
+  			case Left(e) => {
+  				Future(Left(e))
+  			}
+  		}
+  	}
+  }
+
+  /*
   private def exploreTransactionsAsync(ticker:String, block:RPCBlock, currentPool:Int, batch:ListBuffer[TxBatch] = ListBuffer[TxBatch]()):Future[Either[Exception,ListBuffer[TxBatch]]] = {
     var resultsFuts: ListBuffer[Future[Either[Exception,TxBatch]]] = ListBuffer()
 
@@ -310,11 +317,12 @@ object Neo4jBlockchainIndexer {
     }
   }
   */
-  private def getTransaction(ticker:String, txHash:String, block:Option[RPCBlock] = None):Future[Either[Exception,TxBatch]] = {
+  */
+  private def getTransaction(ticker:String, txHash:String, block:Option[RPCBlock] = None):Future[Either[Exception,String]] = {
     val genesisTx = config.getString("coins."+ticker+".genesisTransaction").get
     if(txHash == genesisTx){
       /* Block genesis */
-      Future(Right(new TxBatch(genesisTx, ListBuffer(), "")))
+      Future(Right("Genesis TX"))
     }else{
       val rpcRequestRaw = Json.obj("jsonrpc" -> "1.0",
                               "method" -> "getrawtransaction",
@@ -360,14 +368,15 @@ object Neo4jBlockchainIndexer {
     }
   }
 
-  private def indexTransaction(ticker:String, rpcTx:RPCTransaction, rpcBlock:Option[RPCBlock] = None):Future[Either[Exception,TxBatch]] = {
+  private def indexTransaction(ticker:String, rpcTx:RPCTransaction, rpcBlock:Option[RPCBlock] = None):Future[Either[Exception,String]] = {
 
       //on récupère les informations qui nous manquent concernant la transaction
       var resultsFuts: ListBuffer[Future[Unit]] = ListBuffer()
 
-      var block: NeoBlock = NeoBlock("",0,0, true)
+      //var block: NeoBlock = NeoBlock("",0,0, true)
       var inputs: Map[Int, NeoInput] = Map()
       var outputs: Map[Int, NeoOutput] = Map()
+      /*
       rpcBlock match {
         case Some(b) => {
           block = NeoBlock(b.hash, b.height, b.time, true)
@@ -392,7 +401,7 @@ object Neo4jBlockchainIndexer {
           */
         }
       }
-
+		*/
       var previousOuts = Map[String, List[(Int, Int)]]()
       for((vin, i) <- rpcTx.vin.zipWithIndex){
         vin.coinbase match {
@@ -411,10 +420,10 @@ object Neo4jBlockchainIndexer {
         outputs(vout.n.toInt) = NeoOutput(vout.n.toInt, satoshi(vout.value), vout.scriptPubKey.hex, vout.scriptPubKey.addresses.getOrElse(List[String]()))
       }      
 
-      def finalizeTransaction:Future[Either[Exception,TxBatch]] = {
-        val tx = NeoTransaction(rpcTx.txid, block.time, rpcTx.locktime, None, None)
+      def finalizeTransaction:Future[Either[Exception,String]] = {
+        val tx = NeoTransaction(rpcTx.txid, rpcTx.locktime, None, None)
 
-        Neo4j.tempAddTxFile(ticker, tx, block.hash, inputs, outputs).map { response =>
+        EmbeddedNeo4j2.addTransaction(ticker, tx, inputs, outputs).map { response =>
           response /*match {
             case Right(s) => {
               Right("Transaction '"+rpcTx.txid+"' added !")
@@ -437,7 +446,7 @@ object Neo4jBlockchainIndexer {
   def checkBlockReorg() = {
     
   }
-
+	
   def startAt(ticker:String, fromBlockHash:String):Future[Either[Exception,String]] = {
     getBlock(ticker, fromBlockHash)
   }
@@ -475,20 +484,14 @@ object Neo4jBlockchainIndexer {
   def restart(ticker:String):Future[Either[Exception,String]] = {
     //on recommence l'indexation à partir du block genesis
     val genesisBlock = config.getString("coins."+ticker+".genesisBlock").get
-    Neo4j.setConstraints(ticker).flatMap { result =>
-      result match {
-        case Right(s) => {
-          val fw = new FileWriter(dumpFile(ticker), true)
-          try {
-            fw.write(s)
-          } finally {
-            fw.close()
-          }
+    // Neo4j.setConstraints(ticker).flatMap { result =>
+    //   result match {
+    //     case Right(s) => {
           startAt(ticker, genesisBlock)
-        }
-        case Left(e) => Future(Left(e))
-      }
-    }
+    //     }
+    //     case Left(e) => Future(Left(e))
+    //   }
+    // }
     
   }
 

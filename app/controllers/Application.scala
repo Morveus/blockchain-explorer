@@ -13,7 +13,7 @@ import scala.concurrent.Future
 import scala.util.{Success, Failure}
 object Application extends Controller {
 
-  def index = Action {     
+  def index = Action { 
     Ok
   }
 }
