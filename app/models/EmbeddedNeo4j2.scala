@@ -52,8 +52,8 @@ object EmbeddedNeo4j2 {
 		Future {
 			try {
 				val query = prepareBlockQuery(block, txHashes, previousBlockHash)
-				EmbeddedNeo4j.insertBlock(graphDb.get, query, block.hash)
-	      Right("Block '"+block.hash+"' added !")
+				EmbeddedNeo4j.insertBlock(graphDb.get, query, block.hash, block.height)
+	      		Right("Block '"+block.hash+"' added !")
 			} catch {
 				case e:Exception => {
 					Left(e)
@@ -119,13 +119,21 @@ object EmbeddedNeo4j2 {
       case None => /*Nothing*/
     }
 
+    	if(block.hash == "917c9b20465203f1f3e25ba219a3fd5d533223affc1de91028cddcafc13fa70e"){
+    		println(txHashes.toString)
+    	}
+
     for(txHash <- txHashes){
       query += """
-        MERGE (tx:Transaction { hash: '"""+txHash+"""' })<-[:CONTAINS]-(b)
+        MERGE (:Transaction { hash: '"""+txHash+"""' })<-[:CONTAINS]-(b)
       """
     }
 
     query += """RETURN b"""
+
+    if(block.hash == "917c9b20465203f1f3e25ba219a3fd5d533223affc1de91028cddcafc13fa70e"){
+    		println(query)
+    	}
 
     query
 	}
@@ -141,35 +149,31 @@ object EmbeddedNeo4j2 {
     for((inIndex, input) <- inputs.toSeq.sortBy(_._1)){
       input.coinbase match {
         case Some(c) => {
-          query += """
-					  MERGE (in"""+inIndex+""":Input { input_index: """+inIndex+""" })-[:SUPPLIES]->(tx)
-					  ON CREATE SET
-					    in"""+inIndex+""".coinbase= '"""+c+"""'
-					"""
+          	query += """
+				CREATE (in"""+inIndex+""":InputOutput { input_index: """+inIndex+""", coinbase: '"""+c+"""' })-[:SUPPLIES]->(tx)
+			"""
         }
         case None => {
-          query += """
-					  MERGE (in"""+inIndex+""":Input { input_index: """+inIndex+""" })-[:SUPPLIES]->(tx)
-					  MERGE (inOut"""+inIndex+"""Tx:Transaction { hash: '"""+input.output_tx_hash.get+"""' })
-					  MERGE (inOut"""+inIndex+""":Output { output_index: """+input.output_index.get+"""})<-[:EMITS]-(inOut"""+inIndex+"""Tx)
-					  MERGE (in"""+inIndex+""":Input)<-[:IS_SPENT_BY]-(inOut"""+inIndex+""")
-					"""
+			query += """
+				MERGE (:Transaction { hash: '"""+input.output_tx_hash.get+"""' })-[:EMITS]->(in"""+inIndex+""":InputOutput { output_index: """+input.output_index.get+""" })-[:SUPPLIES]->(tx)
+				SET in"""+inIndex+""".input_index = """+inIndex+"""
+
+			"""
         }
       }
     } 
 
     for((outIndex, output) <- outputs.toSeq.sortBy(_._1)){
       query += """
-			  MERGE (out"""+outIndex+""":Output { output_index: """+output.output_index+"""})<-[:EMITS]-(tx)
-			  ON CREATE SET
+			  MERGE (out"""+outIndex+""":InputOutput { output_index: """+output.output_index+"""})<-[:EMITS]-(tx)
+			  SET
 			    out"""+outIndex+""".value= """+output.value+""",
 			    out"""+outIndex+""".script_hex= '"""+output.script_hex+"""'
 			"""
 
       for(address <- output.addresses){
         query += """
-				  MERGE (out"""+outIndex+"""Addr:Address { address: '"""+address+"""' })
-				  MERGE (out"""+outIndex+"""Addr)<-[:IS_SENT_TO]-(out"""+outIndex+""")
+				  MERGE (out"""+outIndex+"""Addr:Address { address: '"""+address+"""' })<-[:IS_SENT_TO]-(out"""+outIndex+""")
 				"""
       }
     }

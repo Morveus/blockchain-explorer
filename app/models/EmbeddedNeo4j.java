@@ -18,7 +18,7 @@ import org.neo4j.graphdb.ResourceIterator;
 
 public class EmbeddedNeo4j
 {
-    public static void insertBlock(GraphDatabaseService graphDb, String queryString, String blockHash)
+    public static void insertBlock(GraphDatabaseService graphDb, String queryString, String blockHash, Long blockHeight)
     {
         try ( Transaction tx = graphDb.beginTx() )
         {
@@ -27,6 +27,7 @@ public class EmbeddedNeo4j
             Node node = resultIterator.next();
 
             nodeIndex.add( node, "hash", blockHash );
+            nodeIndex.add( node, "height", blockHeight );
 
             tx.success();
         }

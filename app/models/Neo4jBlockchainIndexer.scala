@@ -113,8 +113,7 @@ object Neo4jBlockchainIndexer {
               indexBlock(ticker, block, rpcBlock.tx, rpcBlock.previousblockhash).flatMap { response =>
                 response match {
                   case Right(q) => {
-                    ApiLogs.debug(q) //Block added
-                    //ApiLogs.debug("Block '"+rpcBlock.hash+"' added !") 
+                    //ApiLogs.debug(q) //Block added
 
                     rpcBlock.nextblockhash match {
                       case Some(nextblockhash) => {

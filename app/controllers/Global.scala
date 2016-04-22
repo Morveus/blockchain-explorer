@@ -21,7 +21,7 @@ object Global extends WithFilters(new GzipFilter(shouldGzip = (request, response
     
     EmbeddedNeo4j2.dropDb
     EmbeddedNeo4j2.startService 
-
+    
     val threadBlock = new Thread {
       override def run {
         Neo4jBlockchainIndexer.restart("ltc").map { response =>
@@ -33,6 +33,7 @@ object Global extends WithFilters(new GzipFilter(shouldGzip = (request, response
       }
     }
     threadBlock.start
+    
 
     Thread.sleep(5000) 
 
@@ -41,7 +42,10 @@ object Global extends WithFilters(new GzipFilter(shouldGzip = (request, response
         Neo4jBlockchainIndexer.completeTransaction("ltc").map { response =>
           response match {
             case Right(s) => ApiLogs.debug("Neo4jBlockchainIndexer Transaction result : " + s)
-            case Left(e) => ApiLogs.error("Neo4jBlockchainIndexer Transaction Exception : " + e.toString)
+            case Left(e) => {
+              ApiLogs.error("Neo4jBlockchainIndexer Transaction Exception : " + e.toString)
+              //threadBlock.stop
+            }
           }
 
           //EmbeddedNeo4j2.stopService
