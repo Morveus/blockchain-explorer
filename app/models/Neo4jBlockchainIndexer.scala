@@ -113,7 +113,7 @@ object Neo4jBlockchainIndexer {
               indexBlock(ticker, block, rpcBlock.tx, rpcBlock.previousblockhash).flatMap { response =>
                 response match {
                   case Right(q) => {
-                    //ApiLogs.debug(q) //Block added
+                    ApiLogs.debug(q) //Block added
 
                     rpcBlock.nextblockhash match {
                       case Some(nextblockhash) => {
@@ -181,11 +181,13 @@ object Neo4jBlockchainIndexer {
     }
   }
 
+  /*
   def completeTransaction(ticker:String):Future[Either[Exception,String]] = {
     val genesisTx = config.getString("coins."+ticker+".genesisTransaction").get
   	EmbeddedNeo4j2.getUnprocessedTransaction(ticker, List(genesisTx)).flatMap { response =>
   		response match {
   			case Right(txHash) => {
+
   				if(txHash == ""){
   					Future(Right("completeTransaction ended"))
   				}else{
@@ -208,6 +210,7 @@ object Neo4jBlockchainIndexer {
   		}
   	}
   }
+  */
 
   /*
   private def exploreTransactionsAsync(ticker:String, block:RPCBlock, currentPool:Int, batch:ListBuffer[TxBatch] = ListBuffer[TxBatch]()):Future[Either[Exception,ListBuffer[TxBatch]]] = {
@@ -317,7 +320,7 @@ object Neo4jBlockchainIndexer {
   }
   */
   */
-  private def getTransaction(ticker:String, txHash:String, block:Option[RPCBlock] = None):Future[Either[Exception,String]] = {
+  def getTransaction(ticker:String, txHash:String, block:Option[RPCBlock] = None):Future[Either[Exception,String]] = {
     val genesisTx = config.getString("coins."+ticker+".genesisTransaction").get
     if(txHash == genesisTx){
       /* Block genesis */
@@ -331,6 +334,7 @@ object Neo4jBlockchainIndexer {
 
       WS.url(url).withAuth(user, pass, WSAuthScheme.BASIC).post(rpcRequestRaw).flatMap { response =>
         val rpcResult = Json.parse(response.body)
+
         (rpcResult \ "result") match {
           case JsNull => {
             ApiLogs.error("Transaction '"+txHash+"' not found")
@@ -422,7 +426,7 @@ object Neo4jBlockchainIndexer {
       def finalizeTransaction:Future[Either[Exception,String]] = {
         val tx = NeoTransaction(rpcTx.txid, rpcTx.locktime, None, None)
 
-        EmbeddedNeo4j2.addTransaction(ticker, tx, inputs, outputs).map { response =>
+        EmbeddedNeo4j2.addTransaction(ticker, tx, inputs, outputs).flatMap { response =>
           response /*match {
             case Right(s) => {
               Right("Transaction '"+rpcTx.txid+"' added !")

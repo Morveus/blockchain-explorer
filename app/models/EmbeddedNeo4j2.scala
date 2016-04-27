@@ -6,6 +6,7 @@ import play.api.mvc._
 import scala.util.{ Try, Success, Failure }
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent._
+import scala.collection.JavaConversions._
 
 import java.io.File;
 import java.io.IOException;
@@ -62,11 +63,12 @@ object EmbeddedNeo4j2 {
 		}
 	}
 
-	def getUnprocessedTransaction(ticker:String, noHashes:List[String]):Future[Either[Exception,String]] = {
+	def getUnprocessedTransactions(ticker:String, noHashes:List[String], limit:Int = 200):Future[Either[Exception,List[String]]] = {
 		Future{
 			try {
-				val txHash = EmbeddedNeo4j.getUnprocessedTransaction(graphDb.get)
-				Right(txHash)
+				val hashes = noHashes.mkString("['", "', '", "']")
+				val txHashes:List[String] = EmbeddedNeo4j.getUnprocessedTransactions(graphDb.get, hashes, limit).toList
+				Right(txHashes)
 			} catch {
 				case e:Exception => {
 					Left(e)
@@ -75,15 +77,48 @@ object EmbeddedNeo4j2 {
 		}
 	}
 
-	def addTransaction(ticker:String, tx:NeoTransaction, inputs:Map[Int, NeoInput], outputs:Map[Int, NeoOutput]):Future[Either[Exception,String]]  = {
+	def addTransaction(ticker:String, tx:NeoTransaction, inputs:Map[Int, NeoInput], outputs:Map[Int, NeoOutput]):Future[Future[Either[Exception,String]]]  = {
 		Future {
 			try {
-				val query = prepareTransactionQuery(tx, inputs, outputs)
-				EmbeddedNeo4j.insertTransaction(graphDb.get, query, tx.hash)
-	      Right("Transaction '"+tx.hash+"' added !")
+				val queries = prepareTransactionQuery(tx, inputs, outputs)
+				EmbeddedNeo4j.insertTransaction(graphDb.get, queries(0), tx.hash)
+
+				var resultsFuts: ListBuffer[Future[Boolean]] = ListBuffer()
+				for((query, i) <- queries.zipWithIndex){
+					if(i != 0){
+						resultsFuts += Future { EmbeddedNeo4j.insertInOutput(graphDb.get, query) }
+					}
+				}
+
+				if(resultsFuts.size > 0) {
+					val futuresResponses: Future[ListBuffer[Boolean]] = Future.sequence(resultsFuts)
+	      			futuresResponses.map { responses =>
+	      				var ok = true
+	      				for(response <- responses){
+							response match {
+								case true => /* nothing */
+								case _ => {
+									ok = false
+								}
+							}
+				        }
+
+				        ok match {
+				        	case true => {
+				        		EmbeddedNeo4j.completeProcessTransaction(graphDb.get, tx.hash)
+				        		Right("Transaction '"+tx.hash+"' added !")
+				        	}
+				        	case false => {
+				        		Left(new Exception("Transaction '"+tx.hash+"' not added !"))
+				        	}
+				        }
+	      			}      	
+	      		}else{
+	      			Future(Right("Transaction '"+tx.hash+"' added !"))
+	      		}	
 			} catch {
 				case e:Exception => {
-					Left(e)
+					Future(Left(e))
 				}
 			}
 		}
@@ -119,67 +154,93 @@ object EmbeddedNeo4j2 {
       case None => /*Nothing*/
     }
 
-    	if(block.hash == "917c9b20465203f1f3e25ba219a3fd5d533223affc1de91028cddcafc13fa70e"){
-    		println(txHashes.toString)
-    	}
-
     for(txHash <- txHashes){
       query += """
-        MERGE (:Transaction { hash: '"""+txHash+"""' })<-[:CONTAINS]-(b)
+        MERGE (:Transaction { hash: '"""+txHash+"""', to_process: 1 })<-[:CONTAINS]-(b)
       """
     }
 
     query += """RETURN b"""
 
-    if(block.hash == "917c9b20465203f1f3e25ba219a3fd5d533223affc1de91028cddcafc13fa70e"){
-    		println(query)
-    	}
-
     query
 	}
 
-	private def prepareTransactionQuery(tx:NeoTransaction, inputs:Map[Int, NeoInput], outputs:Map[Int, NeoOutput]):String = {
+	private def prepareTransactionQuery(tx:NeoTransaction, inputs:Map[Int, NeoInput], outputs:Map[Int, NeoOutput]):ListBuffer[String] = {
+
+		var queriesPool = ListBuffer[String]()
+		var countQueries = 0
+		var limitQueries = 50
 		var query = ""
 
-    query += """
-		  MATCH (tx:Transaction { hash: '"""+tx.hash+"""' })
-		  SET tx.lock_time = """+tx.lock_time+"""
-		"""
-
-    for((inIndex, input) <- inputs.toSeq.sortBy(_._1)){
-      input.coinbase match {
-        case Some(c) => {
-          	query += """
-				CREATE (in"""+inIndex+""":InputOutput { input_index: """+inIndex+""", coinbase: '"""+c+"""' })-[:SUPPLIES]->(tx)
+	    query += """
+			  MATCH (tx:Transaction { hash: '"""+tx.hash+"""' })
+			  SET tx.lock_time = """+tx.lock_time+"""
+			  ___TO_PROCESS___
 			"""
-        }
-        case None => {
-			query += """
-				MERGE (:Transaction { hash: '"""+input.output_tx_hash.get+"""' })-[:EMITS]->(in"""+inIndex+""":InputOutput { output_index: """+input.output_index.get+""" })-[:SUPPLIES]->(tx)
-				SET in"""+inIndex+""".input_index = """+inIndex+"""
 
-			"""
-        }
-      }
-    } 
+	    for((inIndex, input) <- inputs.toSeq.sortBy(_._1)){
+	    	if(countQueries == limitQueries){
+	    		if(queriesPool.size == 0){
+	    			query += """RETURN tx"""
+	    		}  		
+	    		queriesPool += query
+	    		query = """MATCH (tx:Transaction { hash: '"""+tx.hash+"""' })"""
+	    		countQueries = 0
+	    	}
+	    	countQueries = countQueries + 1
+	      input.coinbase match {
+	        case Some(c) => {
+	          	query += """
+					MERGE (in"""+inIndex+""":InputOutput { input_index: """+inIndex+""", coinbase: '"""+c+"""' })-[:SUPPLIES]->(tx)
+				"""
+	        }
+	        case None => {
+				query += """
+					MERGE (:Transaction { hash: '"""+input.output_tx_hash.get+"""' })-[:EMITS]->(in"""+inIndex+""":InputOutput { output_index: """+input.output_index.get+""" })-[:SUPPLIES]->(tx)
+					SET in"""+inIndex+""".input_index = """+inIndex+"""
 
-    for((outIndex, output) <- outputs.toSeq.sortBy(_._1)){
-      query += """
+				"""
+	        }
+	      }
+	    } 
+
+	    for((outIndex, output) <- outputs.toSeq.sortBy(_._1)){
+	    	if(countQueries == limitQueries){
+	    		if(queriesPool.size == 0){
+					query += """RETURN tx"""
+				}  
+	    		queriesPool += query
+	    		query = """MATCH (tx:Transaction { hash: '"""+tx.hash+"""' })"""
+	    		countQueries = 0
+	    	}
+	    	countQueries = countQueries + 1
+
+	      	query += """
 			  MERGE (out"""+outIndex+""":InputOutput { output_index: """+output.output_index+"""})<-[:EMITS]-(tx)
 			  SET
 			    out"""+outIndex+""".value= """+output.value+""",
 			    out"""+outIndex+""".script_hex= '"""+output.script_hex+"""'
 			"""
 
-      for(address <- output.addresses){
-        query += """
-				  MERGE (out"""+outIndex+"""Addr:Address { address: '"""+address+"""' })<-[:IS_SENT_TO]-(out"""+outIndex+""")
-				"""
-      }
-    }
+	      for(address <- output.addresses){
+	        query += """
+					  MERGE (out"""+outIndex+"""Addr:Address { address: '"""+address+"""' })<-[:IS_SENT_TO]-(out"""+outIndex+""")
+					"""
+	      }
+	    }
 
-    query += """RETURN tx"""
+	    if(queriesPool.size == 0){
+			query += """RETURN tx"""
+		}  
+    	queriesPool += query
 
-    query
+    	if(queriesPool.size == 1){
+    		queriesPool(0) = queriesPool(0).replaceAll("___TO_PROCESS___", ", tx.to_process = 0")
+    	}else{
+    		queriesPool(0) = queriesPool(0).replaceAll("___TO_PROCESS___", "")
+    	}
+
+
+    	queriesPool
 	}
 }

@@ -2,6 +2,8 @@ package models;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.List;
+import java.util.ArrayList;
 
 import org.neo4j.graphdb.Direction;
 import org.neo4j.graphdb.GraphDatabaseService;
@@ -15,6 +17,7 @@ import org.neo4j.graphdb.index.Index;
 import org.neo4j.graphdb.DynamicLabel;
 import org.neo4j.graphdb.Label;
 import org.neo4j.graphdb.ResourceIterator;
+import org.neo4j.helpers.collection.IteratorUtil;
 
 public class EmbeddedNeo4j
 {
@@ -47,19 +50,75 @@ public class EmbeddedNeo4j
         }
     }
 
-    public static String getUnprocessedTransaction(GraphDatabaseService graphDb)
+    public static void completeProcessTransaction(GraphDatabaseService graphDb, String txHash)
     {
         try ( Transaction tx = graphDb.beginTx() )
         {
             Index<Node> nodeIndex = graphDb.index().forNodes( "nodes" );
-            String queryString = "MATCH (tx:Transaction) WHERE NOT HAS (tx.lock_time) AND NOT(tx.hash IN ['97ddfbbae6be97fd6cdf3e7ca13232a3afff2353e29badfab7f73011edd4ced9']) RETURN tx";
-            ResourceIterator<Node> resultIterator = graphDb.execute( queryString ).columnAs( "tx" );
-            Node node = resultIterator.next();
+            String queryString = "MATCH (tx:Transaction { hash: '"+txHash+"'}) SET tx.to_process = 0";
+            graphDb.execute( queryString );
 
             tx.success();
-            String hash = (String) node.getProperty("hash");
-            return hash;
         }
+    }
+
+    public static Boolean insertInOutput(GraphDatabaseService graphDb, String queryString)
+    {
+        try ( Transaction tx = graphDb.beginTx() )
+        {
+            Index<Node> nodeIndex = graphDb.index().forNodes( "nodes" );
+            graphDb.execute( queryString );
+            tx.success();
+
+            return true;
+        }
+    }
+
+    public static List<String> getUnprocessedTransactions(GraphDatabaseService graphDb, String noHashes, Integer limit)
+    {
+        // try ( Transaction tx = graphDb.beginTx() )
+        // {
+        //     Index<Node> nodeIndex = graphDb.index().forNodes( "nodes" );
+        //     String queryString = "MATCH (tx:Transaction) WHERE tx.to_process = 1 AND NOT(tx.hash IN "+noHashes+") RETURN tx";
+        //     ResourceIterator<Node> resultIterator = graphDb.execute( queryString ).columnAs( "tx" );
+        //     Node node = resultIterator.next();
+
+        //     tx.success();
+        //     String hash = (String) node.getProperty("hash");
+        //     return hash;
+        // }
+
+        
+    
+        // try ( Transaction ignored = graphDb.beginTx();
+        //       Result result = graphDb.execute( "MATCH (tx:Transaction) WHERE tx.to_process = 1 AND NOT(tx.hash IN "+noHashes+") RETURN tx.hash LIMIT 50" ) )
+        // {
+        //     while ( result.hasNext() )
+        //     {
+        //         Map<String,Object> row = result.next();
+
+        //         hashes.add(  );
+        //         for ( Entry<String,Object> column : row.entrySet() )
+        //         {
+        //             rows += column.getKey() + ": " + column.getValue() + "; ";
+        //         }
+        //         rows += "\n";
+        //     }
+        // }
+
+        try ( Transaction tx = graphDb.beginTx() )
+        {
+            List<String> hashes = new ArrayList<String>();
+            Index<Node> nodeIndex = graphDb.index().forNodes( "nodes" );
+            String queryString = "MATCH (tx:Transaction) WHERE tx.to_process = 1 AND NOT(tx.hash IN "+noHashes+") RETURN tx LIMIT "+limit;
+            ResourceIterator<Node> resultIterator = graphDb.execute( queryString ).columnAs( "tx" );
+            for (Node node : IteratorUtil.asIterable(resultIterator)) {
+                hashes.add(node.getProperty( "hash" ).toString());
+            }
+
+            return hashes;
+        }
+
     }
 
     /*
