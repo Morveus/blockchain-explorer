@@ -63,6 +63,19 @@ object EmbeddedNeo4j2 {
 		}
 	}
 
+	def getBeforeLastBlockHash(ticker:String):Future[Either[Exception,Option[String]]] = {
+        Future{
+			try {
+				val txHash:String = EmbeddedNeo4j.getBeforeLastBlockHash(graphDb.get)
+				Right(Some(txHash))
+			} catch {
+				case e:Exception => {
+					Left(e)
+				}
+			}
+		}
+	}
+
 	def getUnprocessedTransactions(ticker:String, noHashes:List[String], limit:Int = 200):Future[Either[Exception,List[String]]] = {
 		Future{
 			try {

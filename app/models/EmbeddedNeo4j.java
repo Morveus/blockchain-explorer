@@ -76,36 +76,6 @@ public class EmbeddedNeo4j
 
     public static List<String> getUnprocessedTransactions(GraphDatabaseService graphDb, String noHashes, Integer limit)
     {
-        // try ( Transaction tx = graphDb.beginTx() )
-        // {
-        //     Index<Node> nodeIndex = graphDb.index().forNodes( "nodes" );
-        //     String queryString = "MATCH (tx:Transaction) WHERE tx.to_process = 1 AND NOT(tx.hash IN "+noHashes+") RETURN tx";
-        //     ResourceIterator<Node> resultIterator = graphDb.execute( queryString ).columnAs( "tx" );
-        //     Node node = resultIterator.next();
-
-        //     tx.success();
-        //     String hash = (String) node.getProperty("hash");
-        //     return hash;
-        // }
-
-        
-    
-        // try ( Transaction ignored = graphDb.beginTx();
-        //       Result result = graphDb.execute( "MATCH (tx:Transaction) WHERE tx.to_process = 1 AND NOT(tx.hash IN "+noHashes+") RETURN tx.hash LIMIT 50" ) )
-        // {
-        //     while ( result.hasNext() )
-        //     {
-        //         Map<String,Object> row = result.next();
-
-        //         hashes.add(  );
-        //         for ( Entry<String,Object> column : row.entrySet() )
-        //         {
-        //             rows += column.getKey() + ": " + column.getValue() + "; ";
-        //         }
-        //         rows += "\n";
-        //     }
-        // }
-
         try ( Transaction tx = graphDb.beginTx() )
         {
             List<String> hashes = new ArrayList<String>();
@@ -121,107 +91,22 @@ public class EmbeddedNeo4j
 
     }
 
-    /*
-    private static final String DB_PATH = "graph-db";
-
-    GraphDatabaseService graphDb;
-    Node currentBlock;
-    private static Index<Node> nodeIndex;
-
-    private static enum RelTypes implements RelationshipType
+    public static String getBeforeLastBlockHash(GraphDatabaseService graphDb)
     {
-        FOLLOWS,
-        CONTAINS,
-        EMITS,
-        SUPPLIES,
-        IS_SENT_TO
-    }
-
-    public void dropDb() throws IOException
-    {
-        FileUtils.deleteRecursively( new File( DB_PATH ) );
-    }
-
-    public void createDb()
-    {
-        graphDb = new GraphDatabaseFactory().newEmbeddedDatabase( DB_PATH );
-        registerShutdownHook( graphDb );
-    }
-
-    public void testInsert()
-    {
-        // START SNIPPET: addUsers
         try ( Transaction tx = graphDb.beginTx() )
         {
-            nodeIndex = graphDb.index().forNodes( "nodes" );
+            Index<Node> nodeIndex = graphDb.index().forNodes( "nodes" );
+            String queryString = "MATCH (b:Block) RETURN b ORDER BY b.height DESC SKIP 1 LIMIT 1";
+            ResourceIterator<Node> resultIterator = graphDb.execute( queryString ).columnAs( "b" );
+            Node node = resultIterator.next();
 
-            for ( int id = 0; id < 5; id++ )
-            {
-                currentBlock = mergeAndIndexBlock(id, currentBlock);
-            }
-
-            tx.success();
-        }
-    }
-
-
-
-    private Node createAndIndexBlock( final Integer blockId, Node parentBlock )
-    {
-        Label label = DynamicLabel.label( "Block" );
-        Node node = graphDb.createNode(label);
-        node.setProperty( "hash", blockId );
-        nodeIndex.add( node, "hash", blockId );
-
-        if(parentBlock!=null){
-            node.createRelationshipTo( parentBlock, RelTypes.FOLLOWS );
+            String hash = (String) node.getProperty("hash");
+            return hash;
         }
 
-        return node;
     }
 
-    private Node mergeAndIndexBlock( final Integer blockId, Node parentBlock )
-    {
-        ResourceIterator<Node> resultIterator = null;
-
-        String queryString = "MERGE (b:Block { hash: '"+blockId+"' }) ON CREATE SET b.height = "+blockId+", b.time = "+blockId+", b.main_chain = "+blockId+" ";
-
-        if(parentBlock!=null){
-            queryString = "MATCH (prevBlock:Block { hash: '"+parentBlock.getProperty("hash")+"' }) "+queryString+" MERGE (b)-[:FOLLOWS]->(prevBlock) ";
-        }
-
-        queryString += "RETURN b";
-
-        resultIterator = graphDb.execute( queryString ).columnAs( "b" );
-        Node node = resultIterator.next();
-
-        nodeIndex.add( node, "hash", blockId );
-
-        return node;
-    }
-
-    public void shutDown()
-    {
-        System.out.println();
-        System.out.println( "Shutting down database ..." );
-        graphDb.shutdown();
-    }
 
     
 
-    private static void registerShutdownHook( final GraphDatabaseService graphDb )
-    {
-        // Registers a shutdown hook for the Neo4j instance so that it
-        // shuts down nicely when the VM exits (even if you "Ctrl-C" the
-        // running application).
-        Runtime.getRuntime().addShutdownHook( new Thread()
-        {
-            @Override
-            public void run()
-            {
-                graphDb.shutdown();
-            }
-        } );
-    }
-    */
 }

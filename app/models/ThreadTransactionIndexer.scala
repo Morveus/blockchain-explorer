@@ -8,8 +8,6 @@ import scala.collection.mutable.ListBuffer
 object TransactionIndexer {
 	val config = play.api.Play.configuration
 
-	//@volatile var currentTxThread: Map[Int, String] = Map()
-
 	class GetUnprocessedTransaction(ticker:String) {
 		var hashes: ListBuffer[String] = ListBuffer()
 		var isRunning: Boolean = false
@@ -24,9 +22,6 @@ object TransactionIndexer {
 				EmbeddedNeo4j2.getUnprocessedTransactions(ticker, (ListBuffer(genesisTx) ++ hashes).toList, nbTxHash ).map { response =>
 					response match {
 			  			case Right(txHashes) => {
-			  				// println("hashes : "+hashes.toString)
-			  				// println("txHashes : "+txHashes.toString)
-			  				// println("================================")
 			  				hashes ++= txHashes.to[ListBuffer]
 			  				isRunning = false
 			  				isRunning
@@ -95,40 +90,7 @@ object TransactionIndexer {
 
 	    	} 	  					
 	    }
-	}
-
-	/*
-	class ThreadSetUnprocessedTransaction(ticker:String) extends Runnable {
-		val hashes: List[String] = List()
-
-		def run {
-			val genesisTx = config.getString("coins."+ticker+".genesisTransaction").get
-
-			EmbeddedNeo4j2.getUnprocessedTransactions(ticker, List(genesisTx) ++ hashes ).map { response =>
-				response match {
-		  			case Right(txHashes) => {
-		  				hashes = txHashes
-		  			}
-		  			case Left(e) => {
-		  				ApiLogs.error("Neo4jBlockchainIndexer Transaction Exception : " + e.toString)
-		  			}
-		  		}
-			}
-		}
-
-		def getTxHash() : Option[String] = {
-			if(hashes.size() > 0){
-				val hash = hashes(0)
-				hashes -= hash
-				Some(hash)
-			}else{
-				None
-			}
-		}
-	}
-	*/
-
-	
+	}	
 
 	def start(ticker:String) = {
 		val nbThread = config.getInt("indexation.thread").get - 1
@@ -146,46 +108,3 @@ object TransactionIndexer {
       	
 	}
 }
-
-
-
-
-
-/*
-class ThreadTransactionIndexer(ticker:String) extends Runnable {
-
-	val config = play.api.Play.configuration
- 	var currentTx:Option[String] = None
-
-    def run {
-        currentTx = None
-        val genesisTx = config.getString("coins."+ticker+".genesisTransaction").get
-	  	EmbeddedNeo4j2.getUnprocessedTransaction(ticker, List(genesisTx)).map { response =>
-	  		response match {
-	  			case Right(txHash) => {
-	  				currentTx = Some(txHash)
-	  				if(txHash == ""){
-	  					ApiLogs.debug("completeTransaction ended")
-	  				}else{
-		  				Neo4jBlockchainIndexer.getTransaction(ticker, txHash).map { response =>
-					  		response match {
-						        case Right(r) => {
-						          ApiLogs.debug(r) //Tx added
-						          run()
-						        }
-						        case Left(e) => {
-						          ApiLogs.error("Neo4jBlockchainIndexer Transaction Exception : " + e.toString)
-						        }
-					  		}
-					  	}
-					}
-	  			}
-	  			case Left(e) => {
-	  				ApiLogs.error("Neo4jBlockchainIndexer Transaction Exception : " + e.toString)
-	  			}
-	  		}
-	  	}
-    }
- 
-}
-*/
