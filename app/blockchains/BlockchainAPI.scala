@@ -6,7 +6,7 @@ import play.api.libs.json._
 
 trait BlockchainAPI {
 
-    def getBlock(ticker: String, blockHash: String): Future[JsValue]
+    def getBlock(ticker: String, blockHeight: Long): Future[JsValue]
 
-    def getTransaction(ticker: String, txHash: String): Future[JsValue]
+    def getUncle(ticker: String, blockHash:String, uncleIndex:Int): Future[JsValue]
 }

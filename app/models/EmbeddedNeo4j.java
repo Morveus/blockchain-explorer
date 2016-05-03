@@ -21,16 +21,25 @@ import org.neo4j.helpers.collection.IteratorUtil;
 
 public class EmbeddedNeo4j
 {
-    public static void insertBlock(GraphDatabaseService graphDb, String queryString, String blockHash, Long blockHeight)
+    public static void insertBlock(GraphDatabaseService graphDb, String blockQuery, String blockHash, Long blockHeight, String unclesQuery, List<String> txQueries)
     {
         try ( Transaction tx = graphDb.beginTx() )
         {
             Index<Node> nodeIndex = graphDb.index().forNodes( "nodes" );
-            ResourceIterator<Node> resultIterator = graphDb.execute( queryString ).columnAs( "b" );
+            ResourceIterator<Node> resultIterator = graphDb.execute( blockQuery ).columnAs( "b" );
             Node node = resultIterator.next();
 
             nodeIndex.add( node, "hash", blockHash );
             nodeIndex.add( node, "height", blockHeight );
+
+            if(unclesQuery != ""){
+                graphDb.execute( unclesQuery );
+            }
+
+            for (String txQuery : txQueries) { 
+               graphDb.execute( txQuery );
+            }
+            
 
             tx.success();
         }

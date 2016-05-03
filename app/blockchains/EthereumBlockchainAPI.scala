@@ -15,25 +15,35 @@ object EthereumBlockchainAPI extends BlockchainAPI {
 
   private def connectionParameters(ticker:String) = {
     val ipNode = config.getString("coins."+ticker+".ipNode")
-    val portNode = config.getString("coins."+ticker+".portNode")
-    val userNode = config.getString("coins."+ticker+".userNode")
-    val passNode = config.getString("coins."+ticker+".passNode")
+    val rpcPort = config.getString("coins."+ticker+".rpcPort")
+    val rpcUser = config.getString("coins."+ticker+".rpcUser")
+    val rpcPass = config.getString("coins."+ticker+".rpcPass")
 
-    ("http://"+ipNode+":"+portNode, userNode, passNode)
+    ("http://"+ipNode+":"+rpcPort, rpcUser, rpcPass)
   }  
 
-  def getBlock(ticker: String, blockHash: String): Future[JsValue] = {
+  def getBlock(ticker: String, blockHeight: Long): Future[JsValue] = {
+    val rpcRequest = Json.obj("jsonrpc" -> "2.0",
+                              "method" -> "eth_getBlockByNumber",
+                              "params" -> Json.arr(blockHeight, true))
+
     val (url, user, pass) = this.connectionParameters(ticker)
 
-    WS.url(url+"/block/"+blockHash).withAuth(user, pass, WSAuthScheme.BASIC).get().map { response =>
+    WS.url(url).withAuth(user, pass, WSAuthScheme.BASIC).post(rpcRequest).map { response =>
       Json.parse(response.body)
     }
   }
 
-  def getTransaction(ticker: String, txHash: String): Future[JsValue] = {
+  def getUncle(ticker: String, blockHash:String, uncleIndex:Int): Future[JsValue] = {
+    val index = Integer.toHexString(uncleIndex)
+    
+    val rpcRequest = Json.obj("jsonrpc" -> "2.0",
+                              "method" -> "eth_getUncleByBlockHashAndIndex",
+                              "params" -> Json.arr(blockHash, index))
+
     val (url, user, pass) = this.connectionParameters(ticker)
 
-    WS.url(url+"/transaction/"+txHash).withAuth(user, pass, WSAuthScheme.BASIC).get().map { response =>
+    WS.url(url).withAuth(user, pass, WSAuthScheme.BASIC).post(rpcRequest).map { response =>
       Json.parse(response.body)
     }
   }

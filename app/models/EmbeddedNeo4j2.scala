@@ -49,135 +49,104 @@ object EmbeddedNeo4j2 {
 		FileUtils.deleteRecursively(new File(DB_PATH))
 	}
 
-	def addBlock(ticker:String, block:NeoBlock, txHashes:List[String], previousBlockHash:Option[String]):Future[Either[Exception,String]]  = {
-		Future {
-			try {
-				val query = prepareBlockQuery(block, txHashes, previousBlockHash)
-				EmbeddedNeo4j.insertBlock(graphDb.get, query, block.hash, block.height)
-	      		Right("Block '"+block.hash+"' added !")
-			} catch {
-				case e:Exception => {
-					Left(e)
-				}
-			}
-		}
-	}
-
-	def getBeforeLastBlockHash(ticker:String):Future[Either[Exception,Option[String]]] = {
-        Future{
-			try {
-				val txHash:String = EmbeddedNeo4j.getBeforeLastBlockHash(graphDb.get)
-				Right(Some(txHash))
-			} catch {
-				case e:Exception => {
-					Left(e)
-				}
-			}
-		}
-	}
-
-	def getUnprocessedTransactions(ticker:String, noHashes:List[String], limit:Int = 200):Future[Either[Exception,List[String]]] = {
-		Future{
-			try {
-				val hashes = noHashes.mkString("['", "', '", "']")
-				val txHashes:List[String] = EmbeddedNeo4j.getUnprocessedTransactions(graphDb.get, hashes, limit).toList
-				Right(txHashes)
-			} catch {
-				case e:Exception => {
-					Left(e)
-				}
-			}
-		}
-	}
-
-	def addTransaction(ticker:String, tx:NeoTransaction, inputs:Map[Int, NeoInput], outputs:Map[Int, NeoOutput]):Future[Future[Either[Exception,String]]]  = {
-		Future {
-			try {
-				val queries = prepareTransactionQuery(tx, inputs, outputs)
-				EmbeddedNeo4j.insertTransaction(graphDb.get, queries(0), tx.hash)
-
-				var resultsFuts: ListBuffer[Future[Boolean]] = ListBuffer()
-				for((query, i) <- queries.zipWithIndex){
-					if(i != 0){
-						resultsFuts += Future { EmbeddedNeo4j.insertInOutput(graphDb.get, query) }
-					}
-				}
-
-				if(resultsFuts.size > 0) {
-					val futuresResponses: Future[ListBuffer[Boolean]] = Future.sequence(resultsFuts)
-	      			futuresResponses.map { responses =>
-	      				var ok = true
-	      				for(response <- responses){
-							response match {
-								case true => /* nothing */
-								case _ => {
-									ok = false
-								}
-							}
-				        }
-
-				        ok match {
-				        	case true => {
-				        		EmbeddedNeo4j.completeProcessTransaction(graphDb.get, tx.hash)
-				        		Right("Transaction '"+tx.hash+"' added !")
-				        	}
-				        	case false => {
-				        		Left(new Exception("Transaction '"+tx.hash+"' not added !"))
-				        	}
-				        }
-	      			}      	
-	      		}else{
-	      			Future(Right("Transaction '"+tx.hash+"' added !"))
-	      		}	
-			} catch {
-				case e:Exception => {
-					Future(Left(e))
-				}
-			}
-		}
+	private def hexToInt(value:String):Int = {
+		Integer.decode(value)
 	}
 
 	private def registerShutdownHook(graphDb:GraphDatabaseService) = {
 		Runtime.getRuntime().addShutdownHook( new Thread()
-      {
-          override def run()
-          {
-              graphDb.shutdown()
-          }
-      }
-    )
+			{
+				override def run()
+				{
+					graphDb.shutdown()
+				}
+			}
+	    )
 	}
 
-	private def prepareBlockQuery(block:NeoBlock, txHashes:List[String], previousBlockHash:Option[String]):String = {
-		var query = """
+	def test(rpcBlock:RPCBlock, blockReward:BigDecimal, uncles:List[(RPCBlock, Integer, BigDecimal)] = List()):Future[Either[Exception,String]] = {
+		Future {
+			try {
+				val blockQuery = prepareBlockQuery(rpcBlock, blockReward)
+				val unclesQuery = prepareUnclesQuery(rpcBlock, uncles)
+				val txQueries = prepareTransactionsQueries(rpcBlock)
+				EmbeddedNeo4j.insertBlock(graphDb.get, blockQuery, rpcBlock.hash, hexToInt(rpcBlock.number), unclesQuery, txQueries)
+	      Right("Block '"+rpcBlock.hash+"' (n°"+hexToInt(rpcBlock.number)+") added !")
+			} catch {
+				case e:Exception => {
+					Left(e)
+				}
+			}
+		}
+	}
+
+	private def prepareBlockQuery(block:RPCBlock, blockReward:BigDecimal):String = {
+		val query = """
+      MERGE (prevBlock:Block { hash: '"""+block.parentHash+"""' })
+      MERGE (a:Address { address_id: '"""+block.miner+"""'})      
       MERGE (b:Block { hash: '"""+block.hash+"""' })
-      ON CREATE SET 
-        b.height = """+block.height+""",
-        b.time = """+block.time+""",
-        b.main_chain = """+block.main_chain+"""
+      	SET 
+	        b.height = """+hexToInt(block.number)+""",
+	        b.time = """+hexToInt(block.timestamp)+"""
+      MERGE (b)-[:FOLLOWS]->(prevBlock)
+      MERGE (b)-[:MINED_BY { reward: """+blockReward+""" }]->(a)
+      RETURN b
     """
-    previousBlockHash match {
-      case Some(prev) => {
-        query = """
-          MATCH (prevBlock:Block { hash: '"""+prev+"""' })
-        """+query+"""
-          MERGE (b)-[:FOLLOWS]->(prevBlock)
-        """
-      }
-      case None => /*Nothing*/
-    }
-
-    for(txHash <- txHashes){
-      query += """
-        MERGE (:Transaction { hash: '"""+txHash+"""', to_process: 1 })<-[:CONTAINS]-(b)
-      """
-    }
-
-    query += """RETURN b"""
-
     query
 	}
 
+	private def prepareUnclesQuery(block:RPCBlock, uncles:List[(RPCBlock, Integer, BigDecimal)]):String = {
+		if(uncles.size > 0){
+			var query = """
+	      MERGE (b:Block { hash: '"""+block.hash+"""' })
+	    """
+	    for(uncle <- uncles){
+	    	val (u, u_index, u_reward) = uncle
+	    	query += """
+	    		MERGE (a"""+u_index+""":Address { address_id: '"""+u.miner+"""'})
+	    		MERGE (u"""+u_index+""":Block { hash: '"""+u.hash+"""' })
+		      	SET 
+			        u"""+u_index+""".height = """+hexToInt(u.number)+""",
+			        u"""+u_index+""".time = """+hexToInt(u.timestamp)+""",
+			        u"""+u_index+""".uncle_index = """+u_index+"""
+			    MERGE (u"""+u_index+""")-[:UNCLE_OF]->(b)
+			    MERGE (u"""+u_index+""")-[:MINED_BY { reward: """+u_reward+""" }]->(a"""+u_index+""")
+	    	"""
+	    }
+	    query
+		}else{
+			""
+		}
+	}
+
+	private def prepareTransactionsQueries(block:RPCBlock):List[String] = {
+		var queries = ListBuffer[String]()
+
+		for(tx <- block.transactions.get){
+			var query = """
+	      MERGE (b:Block { hash: '"""+block.hash+"""' })
+	      MERGE (from:Address { address_id: '"""+tx.from+"""'})
+	      MERGE (to:Address { address_id: '"""+tx.to+"""'})
+	      MERGE (tx:Transaction { hash: '"""+tx.hash+"""'})
+	      	SET
+	      		tx.index = """+hexToInt(tx.transactionIndex)+""",
+	      		tx.nonce = '"""+tx.nonce+"""',
+	      		tx.value = """+Converter.hexToBigDecimal(tx.value)+""",
+	      		tx.gas = """+Converter.hexToBigDecimal(tx.gas)+""",
+	      		tx.gasPrice = """+Converter.hexToBigDecimal(tx.gasPrice)+""",
+	      		tx.input = '"""+tx.input+"""'
+	      MERGE (from)<-[:IS_SENT_FROM]-(tx)-[:IS_SENT_TO]->(to)
+	    """
+	    queries += query
+		}
+
+		queries.toList
+	}
+
+
+
+
+	/*
 	private def prepareTransactionQuery(tx:NeoTransaction, inputs:Map[Int, NeoInput], outputs:Map[Int, NeoOutput]):ListBuffer[String] = {
 
 		var queriesPool = ListBuffer[String]()
@@ -256,4 +225,5 @@ object EmbeddedNeo4j2 {
 
     	queriesPool
 	}
+	*/
 }
