@@ -36,6 +36,7 @@ object Neo4jBlockchainIndexer {
   blockchainsList += ("ltc" -> blockchains.BitcoinBlockchainAPI)
   blockchainsList += ("doge" -> blockchains.BitcoinBlockchainAPI)
   blockchainsList += ("eth" -> blockchains.EthereumBlockchainAPI)
+  blockchainsList += ("btcsegnet" -> blockchains.BitcoinBlockchainAPI)
 
 
 

@@ -17,7 +17,8 @@ object Global extends WithFilters(new GzipFilter(shouldGzip = (request, response
     
     val threadBlock = new Thread {
       override def run {
-        Neo4jBlockchainIndexer.resume("ltc", true).map { response =>
+	// .resume(..., true)
+        Neo4jBlockchainIndexer.resume("btcsegnet", true).map { response =>
           response match {
             case Right(s) => ApiLogs.debug("Neo4jBlockchainIndexer Block result : " + s)
             case Left(e) => ApiLogs.error("Neo4jBlockchainIndexer Block Exception : " + e.toString)
@@ -26,7 +27,7 @@ object Global extends WithFilters(new GzipFilter(shouldGzip = (request, response
       }
     }
     threadBlock.start
-    TransactionIndexer.start("ltc")    
+    TransactionIndexer.start("btcsegnet")    
   }
 
   override def onStop(app: Application) {
