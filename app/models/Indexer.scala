@@ -46,14 +46,20 @@ object Indexer {
 	}
 
 	class ThreadIndexer(ticker:String) extends Runnable {
-	    def run {
+	    def run() {
+	    	process()
+	    }
+
+	    def process(prevBlockNode:Option[Long] = None) {
 	    	val blockHeight = getCurrentBlockHeight()
-    		Neo4jBlockchainIndexer.processBlock(ticker, blockHeight).map { response =>
+    		Neo4jBlockchainIndexer.processBlock(ticker, blockHeight, prevBlockNode).map { response =>
 		  		response match {
 			        case Right(r) => {
-			        	ApiLogs.debug(r)
+			        	var (log, node) = r 
+			        	ApiLogs.debug(log)
 			        	saveState
-			          	run()
+			        
+			        	process(Some(node))
 			        }
 			        case Left(e) => {
 			          ApiLogs.error("Neo4jBlockchainIndexer Exception : " + e.toString)

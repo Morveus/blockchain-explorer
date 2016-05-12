@@ -12,8 +12,8 @@ object Global extends WithFilters(new GzipFilter(shouldGzip = (request, response
   override def onStart(app: Application) {
     ApiLogs.info("BlockchainExplorer API started")
 
-    //EmbeddedNeo4j2.dropDb
-    EmbeddedNeo4j2.startService 
+    EmbeddedNeo4j2.dropDbBatch
+    EmbeddedNeo4j2.startServiceBatch 
     
     Indexer.start("eth")    
   }

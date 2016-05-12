@@ -19,7 +19,8 @@ resolvers ++= Seq(
 
 libraryDependencies ++= Seq(
   "org.neo4j" % "neo4j-enterprise" % "3.0.1",
-  "org.anormcypher" %% "anormcypher" % "0.7.0"
+  "org.anormcypher" %% "anormcypher" % "0.7.0",
+  "redis.clients" % "jedis" % "2.8.0"
 )
 
 

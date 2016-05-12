@@ -53,7 +53,7 @@ object Neo4jBlockchainIndexer {
   }
 
 
-  def processBlock(ticker:String, blockHeight:Long):Future[Either[Exception,String]] = {
+  def processBlock(ticker:String, blockHeight:Long, prevBlockNode:Option[Long]):Future[Either[Exception,(String,Long)]] = {
     getBlock(ticker, blockHeight).flatMap { response =>
       response match {
         case Left(e) => Future(Left(e))
@@ -95,12 +95,12 @@ object Neo4jBlockchainIndexer {
                   Future(Left(e))
                 }
                 case None => {
-                  EmbeddedNeo4j2.insert(rpcBlock, blockReward, uncles.toList)
+                  EmbeddedNeo4j2.batchInsert(rpcBlock, prevBlockNode, blockReward, uncles.toList)
                 }
               }
             }
           }else{
-            EmbeddedNeo4j2.insert(rpcBlock, blockReward)
+            EmbeddedNeo4j2.batchInsert(rpcBlock, prevBlockNode, blockReward)
           }
         }
       }
