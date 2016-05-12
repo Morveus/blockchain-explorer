@@ -17,7 +17,7 @@ import org.neo4j.graphdb.index.Index;
 import org.neo4j.graphdb.DynamicLabel;
 import org.neo4j.graphdb.Label;
 import org.neo4j.graphdb.ResourceIterator;
-import org.neo4j.helpers.collection.IteratorUtil;
+//import org.neo4j.helpers.collection.IteratorUtil;
 
 public class EmbeddedNeo4j
 {
@@ -42,9 +42,11 @@ public class EmbeddedNeo4j
             
 
             tx.success();
+            tx.close();
         }
     }
 
+    /*
     public static void insertTransaction(GraphDatabaseService graphDb, String queryString, String txHash)
     {
         try ( Transaction tx = graphDb.beginTx() )
@@ -115,7 +117,7 @@ public class EmbeddedNeo4j
 
     }
 
-
+    */
     
 
 }

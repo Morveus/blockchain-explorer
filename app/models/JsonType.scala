@@ -35,7 +35,7 @@ case class RPCTransaction(
   blockNumber: String,
   transactionIndex: String,
   from: String,
-  to: String,
+  to: Option[String],
   value: String,
   gas: String,
   gasPrice: String,

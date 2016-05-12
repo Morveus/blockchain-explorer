@@ -5,42 +5,65 @@ import scala.concurrent.Future
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.collection.mutable.ListBuffer
 
+import com.typesafe.config._
+import java.io._
+
 object Indexer {
 	val config = play.api.Play.configuration
 
-	var currentBlockHeight:Long = 0
+	var indexer: Config = ConfigFactory.parseFile(new File("indexer.conf"))
+
+	var currentBlockHeight:Long = indexer.getInt("currentblock") //1467659
 
 	def getCurrentBlockHeight():Long = {
 		val current = currentBlockHeight
-		currentBlockHeight += 1
+		currentBlockHeight -= 1
 		current
+	}
+
+	var toSave:Int = 0
+	var isSaving = false
+	def saveState = {
+		toSave += 1 
+		Future {
+			if(toSave > 100 && isSaving == false){
+				toSave = 0
+				isSaving = true
+				indexer = indexer.withValue("currentblock", ConfigValueFactory.fromAnyRef(currentBlockHeight))
+
+				val renderOpts = ConfigRenderOptions.defaults().setOriginComments(false).setComments(false).setJson(false);
+				//println(indexer.root().render(renderOpts))
+
+				val file = new File("indexer.conf")
+				val bw = new BufferedWriter(new FileWriter(file))
+				bw.write(indexer.root().render(renderOpts))
+				bw.close()
+
+				isSaving = false
+			}
+		}
+		
 	}
 
 	class ThreadIndexer(ticker:String) extends Runnable {
 	    def run {
 	    	val blockHeight = getCurrentBlockHeight()
-	    	//if(blockHeight < 100){
-	    		Neo4jBlockchainIndexer.processBlock(ticker, blockHeight).map { response =>
-			  		response match {
-				        case Right(r) => {
-				        	ApiLogs.debug(r)
-				          	run()
-				        }
-				        case Left(e) => {
-				          ApiLogs.error("Neo4jBlockchainIndexer Exception : " + e.toString)
-				        }
-			  		}
-			  	}		
-	    	//}
+    		Neo4jBlockchainIndexer.processBlock(ticker, blockHeight).map { response =>
+		  		response match {
+			        case Right(r) => {
+			        	ApiLogs.debug(r)
+			        	saveState
+			          	run()
+			        }
+			        case Left(e) => {
+			          ApiLogs.error("Neo4jBlockchainIndexer Exception : " + e.toString)
+			        }
+		  		}
+		  	}		
 	    }
 	}	
 
 	def start(ticker:String) = {
-		val nbThread = config.getInt("indexation.thread").get - 1
-
-		//for( a <- 1 to nbThread){
-        	new Thread( new ThreadIndexer(ticker) ).start
-        	Thread.sleep(100)
-      	//}	
+        new Thread( new ThreadIndexer(ticker) ).start
 	}
 }
