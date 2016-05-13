@@ -8,6 +8,7 @@ import play.api.libs.json._
 
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
+import scala.util.Random
 
 object EthereumBlockchainAPI extends BlockchainAPI {
 
@@ -23,8 +24,10 @@ object EthereumBlockchainAPI extends BlockchainAPI {
   }  
 
   def getBlock(ticker: String, blockHeight: Long): Future[JsValue] = {
+    val rpcRequestId = Random.nextInt(10000000)
     val rpcRequest = Json.obj("jsonrpc" -> "2.0",
                               "method" -> "eth_getBlockByNumber",
+                              "id" -> rpcRequestId,
                               "params" -> Json.arr(blockHeight, true))
 
     val (url, user, pass) = this.connectionParameters(ticker)
@@ -36,9 +39,11 @@ object EthereumBlockchainAPI extends BlockchainAPI {
 
   def getUncle(ticker: String, blockHash:String, uncleIndex:Int): Future[JsValue] = {
     val index = Integer.toHexString(uncleIndex)
-    
+
+    val rpcRequestId = Random.nextInt(10000000)    
     val rpcRequest = Json.obj("jsonrpc" -> "2.0",
                               "method" -> "eth_getUncleByBlockHashAndIndex",
+                              "id" -> rpcRequestId,
                               "params" -> Json.arr(blockHash, index))
 
     val (url, user, pass) = this.connectionParameters(ticker)
