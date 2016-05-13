@@ -25,29 +25,99 @@ import org.neo4j.graphdb.DynamicLabel;
 import org.neo4j.graphdb.Label;
 import org.neo4j.graphdb.ResourceIterator;
 
+import org.neo4j.unsafe.batchinsert.BatchInserter;
+import org.neo4j.unsafe.batchinsert.BatchInserters;
+import org.neo4j.graphdb.DynamicRelationshipType;
+
 import models._
+import utils.Redis
+import redis.clients.jedis._
 
 object EmbeddedNeo4j2 {
 	val config 	= play.Play.application.configuration
 	val DB_PATH = "graph-db"
 
-	var graphDb:Option[GraphDatabaseService] = None
+	var jedis:Option[Jedis] = None
+	var batchInserter:Option[BatchInserter] = None
+	var blockLabel: Option[Label] = None
 
+	var follows:RelationshipType = DynamicRelationshipType.withName( "FOLLOWS" )
 
 	def startService {
-		graphDb = Some(new GraphDatabaseFactory().newEmbeddedDatabase(DB_PATH))
-    registerShutdownHook(graphDb.get)
-    ApiLogs.debug("started")
+		batchInserter = Some(BatchInserters.inserter( new File( DB_PATH ) ))
+		jedis = Some(Redis.jedis())
+		registerShutdownHookBatch(batchInserter.get, jedis.get)
+
+		blockLabel = Some(DynamicLabel.label( "Block" ))
+		batchInserter.get.createDeferredSchemaIndex( blockLabel.get ).on( "hash" ).create()		
+
+		ApiLogs.debug("started")
 	}
 
 	def stopService {
+		batchInserter match {
+			case None => /* */
+			case Some(bi) => bi.shutdown()
+		}
+		jedis match {
+			case None => /* */
+			case Some(j) => j.close()
+		}
 		ApiLogs.debug("shutdown")
-		graphDb.get.shutdown()
+	}
+
+	private def registerShutdownHookBatch(bi:BatchInserter, jedis:Jedis) = {
+		Runtime.getRuntime().addShutdownHook( new Thread()
+			{
+				override def run()
+				{
+					bi.shutdown()
+					jedis.close()
+				}
+			}
+	    )
 	}
 
 	def dropDb {
+		Redis.dels("blockchain-explorer:address:*")
 		FileUtils.deleteRecursively(new File(DB_PATH))
 	}
+
+
+	def batchInsert(rpcBlock:RPCBlock, prevBlockNode:Option[Long]):Future[Either[Exception,(String, Long)]] = {
+		Future {
+			try {				
+
+				// Block
+				var properties:java.util.Map[String,Object] = new java.util.HashMap()
+					properties.put( "hash", rpcBlock.hash )
+					properties.put( "height", rpcBlock.height.toString )
+					properties.put( "time", rpcBlock.time.toString )
+					properties.put( "main_chain", true.toString )
+				val blockNode:Long = batchInserter.get.createNode( properties, blockLabel.get )
+
+				prevBlockNode match {
+					case Some(prevNode) => {
+						batchInserter.get.createRelationship( blockNode, prevNode, follows, null )
+					}
+					case None => /* */
+				}				
+
+	      Right("Block '"+rpcBlock.hash+"' (n°"+rpcBlock.height.toString+") added !", blockNode)
+			} catch {
+				case e:Exception => {
+					Left(e)
+				}
+			}
+		}
+	}
+
+
+
+
+
+
+	/*
 
 	def addBlock(ticker:String, block:NeoBlock, txHashes:List[String], previousBlockHash:Option[String]):Future[Either[Exception,String]]  = {
 		Future {
@@ -137,16 +207,7 @@ object EmbeddedNeo4j2 {
 		}
 	}
 
-	private def registerShutdownHook(graphDb:GraphDatabaseService) = {
-		Runtime.getRuntime().addShutdownHook( new Thread()
-      {
-          override def run()
-          {
-              graphDb.shutdown()
-          }
-      }
-    )
-	}
+	
 
 	private def prepareBlockQuery(block:NeoBlock, txHashes:List[String], previousBlockHash:Option[String]):String = {
 		var query = """
@@ -256,4 +317,5 @@ object EmbeddedNeo4j2 {
 
     	queriesPool
 	}
+	*/
 }

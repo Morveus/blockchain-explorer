@@ -7,7 +7,7 @@ import scala.collection.mutable.ListBuffer
 
 object TransactionIndexer {
 	val config = play.api.Play.configuration
-
+	/*
 	class GetUnprocessedTransaction(ticker:String) {
 		var hashes: ListBuffer[String] = ListBuffer()
 		var isRunning: Boolean = false
@@ -107,4 +107,5 @@ object TransactionIndexer {
 
       	
 	}
+	*/
 }

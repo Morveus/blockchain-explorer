@@ -17,7 +17,7 @@ import org.neo4j.graphdb.index.Index;
 import org.neo4j.graphdb.DynamicLabel;
 import org.neo4j.graphdb.Label;
 import org.neo4j.graphdb.ResourceIterator;
-import org.neo4j.helpers.collection.IteratorUtil;
+// import org.neo4j.helpers.collection.IteratorUtil;
 
 public class EmbeddedNeo4j
 {
@@ -74,6 +74,7 @@ public class EmbeddedNeo4j
         }
     }
 
+    /*
     public static List<String> getUnprocessedTransactions(GraphDatabaseService graphDb, String noHashes, Integer limit)
     {
         try ( Transaction tx = graphDb.beginTx() )
@@ -90,6 +91,7 @@ public class EmbeddedNeo4j
         }
 
     }
+    */
 
     public static String getBeforeLastBlockHash(GraphDatabaseService graphDb)
     {
