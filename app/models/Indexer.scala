@@ -40,37 +40,41 @@ object Indexer {
 	}
 
 	class ThreadIndexer(ticker:String) extends Runnable {
-    def run() {
-    	process(ticker, currentBlockHash)
-    }
+	    def run() {
+	    	process(ticker, currentBlockHash)
+	    }
 
-    def process(ticker:String, blockHash:String, prevBlockNode:Option[Long] = None) {
+	    def process(ticker:String, blockHash:String, prevBlockNode:Option[Long] = None) {
 
-  		Neo4jBlockchainIndexer.processBlock(ticker, blockHash, prevBlockNode).map { response =>
-  			response match {
-          case Right(q) => {
-            var (message, blockNode, nextBlockHash) = q
-            ApiLogs.debug(message) //Block added
+	  		Neo4jBlockchainIndexer.processBlock(ticker, blockHash, prevBlockNode).map { response =>
+	  			response match {
+	          case Right(q) => {
+	            var (message, blockNode, nextBlockHash) = q
+	            ApiLogs.debug(message) //Block added
 
-            saveState(blockHash)
+	            saveState(blockHash)
 
-            nextBlockHash match {
-              case Some(next) => {
+	            nextBlockHash match {
+	              case Some(next) => {
+	              	if(next == "e081e3ab67a210d01dc67537eeae475ceea3dbaef6b0245d235c854f8cdadffc"){
+	              		EmbeddedNeo4j2.stopService
+	          		}else{
+	          			process(ticker, next, Some(blockNode))
+	          		}
+	                
+	              }
+	              case None => {
+	                ApiLogs.debug("Blocks synchronized !")
+	              }
+	            }
+	          }
+	          case Left(e) => {
+	            ApiLogs.error("Neo4jBlockchainIndexer Exception : " + e.toString)
+	          }
+	        }
 
-                process(ticker, next, Some(blockNode))
-              }
-              case None => {
-                ApiLogs.debug("Blocks synchronized !")
-              }
-            }
-          }
-          case Left(e) => {
-            ApiLogs.error("Neo4jBlockchainIndexer Exception : " + e.toString)
-          }
-        }
-
-	  	}		
-    }
+		  	}		
+	    }
 	}	
 
 	def start(ticker:String) = {

@@ -14,6 +14,7 @@ object Global extends WithFilters(new GzipFilter(shouldGzip = (request, response
 
     EmbeddedNeo4j2.dropDb
     EmbeddedNeo4j2.startService 
+    EmbeddedNeo4j2.cleanRedis
     
     Indexer.start("ltc")    
   }

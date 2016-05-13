@@ -72,11 +72,9 @@ object Neo4jBlockchainIndexer {
 
           exploreTransactionsAsync(ticker, rpcBlock, 0).flatMap { response =>
             response match {
-              case Right(b) => {
+              case Right(txs) => {
 
-
-                indexBlock(ticker, rpcBlock, prevBlockNode)
-
+                indexFullBlock(ticker, rpcBlock, prevBlockNode, txs)
 
               }
               case Left(e) => {
@@ -118,8 +116,8 @@ object Neo4jBlockchainIndexer {
     }
   }
 
-  private def indexBlock(ticker:String, rpcBlock:RPCBlock, prevBlockNode:Option[Long]):Future[Either[Exception,(String, Long, Option[String])]] = {
-    EmbeddedNeo4j2.batchInsert(rpcBlock, prevBlockNode).map { result =>
+  private def indexFullBlock(ticker:String, rpcBlock:RPCBlock, prevBlockNode:Option[Long], transactions:ListBuffer[RPCTransaction]):Future[Either[Exception,(String, Long, Option[String])]] = {
+    EmbeddedNeo4j2.batchInsert(rpcBlock, prevBlockNode, transactions).map { result =>
       result match {
         case Left(e) => Left(e)
         case Right(r) => {
@@ -141,33 +139,40 @@ object Neo4jBlockchainIndexer {
     }
   }
 
-  private def exploreTransactionsAsync(ticker:String, block:RPCBlock, currentPool:Int, batch:ListBuffer[TxBatch] = ListBuffer[TxBatch]()):Future[Either[Exception,ListBuffer[TxBatch]]] = {
-    var resultsFuts: ListBuffer[Future[Either[Exception,TxBatch]]] = ListBuffer()
+  private def exploreTransactionsAsync(ticker:String, block:RPCBlock, currentPool:Int, batch:ListBuffer[RPCTransaction] = ListBuffer[RPCTransaction]()):Future[Either[Exception,ListBuffer[RPCTransaction]]] = {
+    var resultsFuts: ListBuffer[Future[Either[Exception,Option[RPCTransaction]]]] = ListBuffer()
 
     val txNb = block.tx.length
     val poolsTxs = block.tx.grouped(maxqueries).toList
 
     for(tx <- poolsTxs(currentPool)){
-      resultsFuts += getTransaction(ticker, tx, Some(block))
+      resultsFuts += processTransaction(ticker, tx)
     }
 
     if(resultsFuts.size > 0) {
-      val futuresResponses: Future[ListBuffer[Either[Exception,TxBatch]]] = Future.sequence(resultsFuts)
-      futuresResponses.flatMap { responses =>
-        var returnEither:Either[Exception,String] = Right("Block '"+block.hash+"' transactions added")
-        for(response <- responses){
-          response match {
-            case Right(b) => {
-              batch += b
-            }
+      val futuresResponses: Future[ListBuffer[Either[Exception,Option[RPCTransaction]]]] = Future.sequence(resultsFuts)
+      futuresResponses.flatMap { transactions =>
+        var error:Option[Exception] = None
+        for(transaction <- transactions){
+          transaction match {
             case Left(e) => {
-              returnEither = Left(e)
+              error = Some(e)
+            }
+            case Right(tx) => {
+              tx match {
+                case None => /* genesis tx */
+                case Some(t) => {
+                  batch += t
+                }
+              }
             }
           }
         }
 
-        returnEither match {
-          case Right(s) => {
+        error match {
+          case Some(e) => Future(Left(e))
+          case None => {
+
             if(currentPool + 1 < poolsTxs.size){
               exploreTransactionsAsync(ticker, block, currentPool + 1, batch).map { result =>
                 result match {
@@ -183,8 +188,8 @@ object Neo4jBlockchainIndexer {
             }else{
               Future(Right(batch))
             }
+
           }
-          case Left(e) => Future(Left(e))
         }
 
       }
@@ -193,51 +198,51 @@ object Neo4jBlockchainIndexer {
     }     
   }
 
-  /*
-
-  def getTransaction(ticker:String, txHash:String, block:Option[RPCBlock] = None):Future[Either[Exception,String]] = {
+  private def processTransaction(ticker:String, txHash:String):Future[Either[Exception,Option[RPCTransaction]]] = {
     val genesisTx = config.getString("coins."+ticker+".genesisTransaction").get
     if(txHash == genesisTx){
-      /* Block genesis */
-      Future(Right("Genesis TX"))
+      Future(Right(None))
     }else{
-      val rpcRequestRaw = Json.obj("jsonrpc" -> "1.0",
-                              "method" -> "getrawtransaction",
-                              "params" -> Json.arr(txHash, 1))
-
-      val (url, user, pass) = this.connectionParameters(ticker)
-
-      WS.url(url).withAuth(user, pass, WSAuthScheme.BASIC).post(rpcRequestRaw).flatMap { response =>
-        val rpcResult = Json.parse(response.body)
-
-        (rpcResult \ "result") match {
-          case JsNull => {
-            ApiLogs.error("Transaction '"+txHash+"' not found")
-            Future(Left(new Exception("Transaction '"+txHash+"' not found")))
-          }
-          case result: JsObject => {
-            result.validate[RPCTransaction] match {
-              case t: JsSuccess[RPCTransaction] => {
-                val tx = t.get
-
-                this.indexTransaction(ticker, tx).map { response =>
-                  response                   
-                }
-              }
-              case e: JsError => {
-                ApiLogs.error("Invalid transaction '"+txHash+"' from RPC : "+response.body)
-                Future(Left(new Exception("Invalid transaction '"+txHash+"' from RPC : "+response.body)))
-              } 
-            }
-          }
-          case _ => {
-            ApiLogs.error("Invalid transaction '"+txHash+"' result from RPC : "+response.body)
-            Future(Left(new Exception("Invalid transaction '"+txHash+"' result from RPC : "+response.body)))
+      getTransaction(ticker, txHash).flatMap { response =>
+        response match {
+          case Left(e) => Future(Left(e))
+          case Right(rpcTransaction) => {
+            Future(Right(Some(rpcTransaction)))
           }
         }
       }
     }
   }
+
+  private def getTransaction(ticker:String, txHash:String):Future[Either[Exception,RPCTransaction]] = {
+    blockchainsList(ticker).getTransaction(ticker, txHash).map { response =>
+      (response \ "result") match {
+        case JsNull => {
+          ApiLogs.error("Transaction '"+txHash+"' not found")
+          Left(new Exception("Transaction '"+txHash+"' not found"))
+        }
+        case result: JsObject => {
+          result.validate[RPCTransaction] match {
+            case tx: JsSuccess[RPCTransaction] => {
+              Right(tx.get)
+            }
+            case e: JsError => {
+              ApiLogs.error("Invalid transaction '"+txHash+"' from RPC : "+response)
+              Left(new Exception("Invalid transaction '"+txHash+"' from RPC : "+response))
+            }
+          }
+        }
+        case _ => {
+          ApiLogs.error("Invalid transaction '"+txHash+"' from RPC : "+response)
+          Left(new Exception("Invalid transaction '"+txHash+"' from RPC : "+response))
+        }
+      }
+    }
+  }
+
+
+/*
+  
 
   private def indexTransaction(ticker:String, rpcTx:RPCTransaction):Future[Either[Exception,String]] = {
 
@@ -283,6 +288,7 @@ object Neo4jBlockchainIndexer {
       }
   }
 	
+
   def startAt(ticker:String, fromBlockHash:String):Future[Either[Exception,String]] = {
     getBlock(ticker, fromBlockHash)
   }

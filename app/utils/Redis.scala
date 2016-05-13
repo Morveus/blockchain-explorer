@@ -100,6 +100,16 @@ object Redis {
     result
   }
 
+  def dels(jedis:Jedis, pattern: String): Long = {
+    val keys:List[String] = jedis.keys(pattern).asScala.toList
+    val result:Long = keys.length match {
+      case 0 => 0
+      case _ => jedis.del(keys : _*)
+    }
+
+    result
+  }
+
   /* SETS COMMANDS */
 
   def sadd(key: String, members: String*): Long = {
