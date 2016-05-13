@@ -133,7 +133,7 @@ object EmbeddedNeo4j2 {
 	}
 
 	def dropDbBatch {
-		Redis.dels("address:*")
+		Redis.dels("blockchain-explorer:address:*")
 		FileUtils.deleteRecursively(new File(DB_BATCH_PATH))
 	}
 
@@ -164,13 +164,13 @@ object EmbeddedNeo4j2 {
 	}
 
 	def getAddressNode(address: String):Long = {
-		Redis.get(jedis.get, "address:"+address) match {
+		Redis.get(jedis.get, "blockchain-explorer:address:"+address) match {
 			case Some(addressNode) => addressNode.toLong
 			case None => {
 				var properties:java.util.Map[String,Object] = new java.util.HashMap()
 					properties.put( "value", address )
 				val addressNode:Long = batchInserter.get.createNode( properties, addressLabel.get )
-				Redis.set(jedis.get, "address:"+address, addressNode.toString)
+				Redis.set(jedis.get, "blockchain-explorer:address:"+address, addressNode.toString)
 				addressNode
 			}
 		}

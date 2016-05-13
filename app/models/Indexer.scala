@@ -58,7 +58,7 @@ object Indexer {
 			        	var (log, node) = r 
 			        	ApiLogs.debug(log)
 			        	saveState
-			        
+
 			        	process(Some(node))
 			        }
 			        case Left(e) => {
