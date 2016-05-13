@@ -25,6 +25,7 @@ case class RPCTransaction(
 
 case class RPCTransactionVIn(
   coinbase: Option[String],
+  txinwitness: Option[List[String]],
   txid: Option[String],
   vout: Option[Long],
   scriptSig: Option[RPCScriptSig],

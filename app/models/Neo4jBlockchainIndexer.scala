@@ -31,6 +31,7 @@ object Neo4jBlockchainIndexer {
   blockchainsList += ("btc" -> blockchains.BitcoinBlockchainAPI)
   blockchainsList += ("ltc" -> blockchains.BitcoinBlockchainAPI)
   blockchainsList += ("doge" -> blockchains.BitcoinBlockchainAPI)
+  blockchainsList += ("btcsegnet" -> blockchains.BitcoinBlockchainAPI)
 
 
   implicit val blockReads             = Json.reads[RPCBlock]
@@ -60,9 +61,7 @@ object Neo4jBlockchainIndexer {
     }
   }
 
-  private def satoshi(btc:BigDecimal):Long = {
-    (btc * 100000000).toLong
-  }
+  
 
   def processBlock(ticker:String, blockHash:String, prevBlockNode:Option[Long] = None):Future[Either[Exception,(String, Long, Option[String])]] = {
     getBlock(ticker, blockHash).flatMap { response =>

@@ -18,15 +18,12 @@ object BitcoinBlockchainAPI extends BlockchainAPI {
     val rpcPort = config.getString("coins."+ticker+".rpcPort")
     val rpcUser = config.getString("coins."+ticker+".rpcUser")
     val rpcPass = config.getString("coins."+ticker+".rpcPass")
-    // (ipNode, rpcPort, rpcUser, rpcPass) match {
-    //   case (Some(ip), Some(port), Some(user), Some(pass)) => ("http://"+ip+":"+port, user, pass)
-    //   case _ => throw new Exception("'coins."+ticker+".ipNode', 'coins."+ticker+".rpcPort', 'coins."+ticker+".rpcUser' or 'coins."+ticker+".rpcPass' are missing in application.conf")
-    // }
+    
     ("http://"+ipNode+":"+rpcPort, rpcUser, rpcPass)
   }  
 
   def getBlock(ticker: String, blockHash: String): Future[JsValue] = {
-    val rpcRequest = Json.obj("jsonrpc" -> "1.0",
+    val rpcRequest = Json.obj("jsonrpc" -> "2.0",
                               "method" -> "getblock",
                               "params" -> Json.arr(blockHash))
 
@@ -38,7 +35,7 @@ object BitcoinBlockchainAPI extends BlockchainAPI {
   }
 
   def getTransaction(ticker: String, txHash: String): Future[JsValue] = {
-     val rpcRequest = Json.obj("jsonrpc" -> "1.0",
+     val rpcRequest = Json.obj("jsonrpc" -> "2.0",
                               "method" -> "getrawtransaction",
                               "params" -> Json.arr(txHash, 1))
 

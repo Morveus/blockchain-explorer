@@ -56,12 +56,7 @@ object Indexer {
 
 	            nextBlockHash match {
 	              case Some(next) => {
-	              	if(next == "e081e3ab67a210d01dc67537eeae475ceea3dbaef6b0245d235c854f8cdadffc"){
-	              		EmbeddedNeo4j2.stopService
-	          		}else{
-	          			process(ticker, next, Some(blockNode))
-	          		}
-	                
+	          		process(ticker, next, Some(blockNode))	                
 	              }
 	              case None => {
 	                ApiLogs.debug("Blocks synchronized !")

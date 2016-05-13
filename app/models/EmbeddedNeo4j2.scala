@@ -30,7 +30,7 @@ import org.neo4j.unsafe.batchinsert.BatchInserters;
 import org.neo4j.graphdb.DynamicRelationshipType;
 
 import models._
-import utils.Redis
+import utils._
 import redis.clients.jedis._
 
 object EmbeddedNeo4j2 {
@@ -103,26 +103,22 @@ object EmbeddedNeo4j2 {
 	}
 
 
-	private def getInputOutputNode(txHash: String, outputIndex:Long, data:Map[String, String] = Map[String, String]()):Long = {
+	private def getInputOutputNode(txHash: String, outputIndex:Long, data:java.util.Map[String,Object] = Map[String, Object]()):Long = {
 		Redis.get(jedis.get, "blockchain-explorer:inputoutput:"+txHash+":"+outputIndex) match {
 			case Some(inputoutputNodeS) => {
 				val inputoutputNode:Long = inputoutputNodeS.toLong
 
 				// Update node properties
 				var properties:java.util.Map[String,Object] = batchInserter.get.getNodeProperties(inputoutputNode)
-				for((key,value)  <- data){
-					properties.put( key, value )
-				}
+					properties.putAll(data)
 				batchInserter.get.setNodeProperties(inputoutputNode, properties)
 
 				inputoutputNode
 			}
 			case None => {
 				var properties:java.util.Map[String,Object] = new java.util.HashMap()
-					properties.put( "output_index", outputIndex.toString )
-					for((key,value)  <- data){
-						properties.put( key, value )
-					}
+					properties.put( "output_index", outputIndex.asInstanceOf[AnyRef] )
+					properties.putAll(data)
 				val inputoutputNode:Long = batchInserter.get.createNode( properties, inputoutputLabel.get )
 				Redis.set(jedis.get, "blockchain-explorer:inputoutput:"+txHash+":"+outputIndex, inputoutputNode.toString)
 				inputoutputNode
@@ -135,7 +131,7 @@ object EmbeddedNeo4j2 {
 			case Some(addressNode) => addressNode.toLong
 			case None => {
 				var properties:java.util.Map[String,Object] = new java.util.HashMap()
-					properties.put( "value", address )
+					properties.put( "value", address.asInstanceOf[AnyRef] )
 				val addressNode:Long = batchInserter.get.createNode( properties, addressLabel.get )
 				Redis.set(jedis.get, "blockchain-explorer:address:"+address, addressNode.toString)
 				addressNode
@@ -150,10 +146,10 @@ object EmbeddedNeo4j2 {
 
 				// Block
 				var properties:java.util.Map[String,Object] = new java.util.HashMap()
-					properties.put( "hash", rpcBlock.hash )
-					properties.put( "height", rpcBlock.height.toString )
-					properties.put( "time", rpcBlock.time.toString )
-					properties.put( "main_chain", true.toString )
+					properties.put( "hash", rpcBlock.hash.asInstanceOf[AnyRef] )
+					properties.put( "height", rpcBlock.height.asInstanceOf[AnyRef] )
+					properties.put( "time", rpcBlock.time.asInstanceOf[AnyRef] )
+					properties.put( "main_chain", true.asInstanceOf[AnyRef] )
 				val blockNode:Long = batchInserter.get.createNode( properties, blockLabel.get )
 
 				// Parent Block relationship
@@ -167,24 +163,32 @@ object EmbeddedNeo4j2 {
 				// Transactions
 				for(rpcTransaction <- transactions){
 					properties = new java.util.HashMap()
-						properties.put( "hash", rpcTransaction.txid )
-						properties.put( "received_at", rpcBlock.time.toString )
-						properties.put( "lock_time", rpcTransaction.locktime.toString )
+						properties.put( "hash", rpcTransaction.txid.asInstanceOf[AnyRef] )
+						properties.put( "received_at", rpcBlock.time.asInstanceOf[AnyRef] )
+						properties.put( "lock_time", rpcTransaction.locktime.asInstanceOf[AnyRef] )
 					val txNode:Long = batchInserter.get.createNode( properties, transactionLabel.get )
 					batchInserter.get.createRelationship( blockNode, txNode, contains, null )
 
 					// Inputs
 					for((rpcInput, index) <- rpcTransaction.vin.zipWithIndex){
+						properties = new java.util.HashMap()
+							properties.put( "input_index", index.asInstanceOf[AnyRef] )
+
+						rpcInput.txinwitness match {
+							case None => /* nothing */
+							case Some(witness) => {
+								properties.put( "txinwitness", witness.toArray.asInstanceOf[AnyRef] )
+							}
+						}
+
 						rpcInput.coinbase match {
 							case Some(coinbase) => {
-								properties = new java.util.HashMap()
-									properties.put( "input_index", index.toString )
-									properties.put( "coinbase", coinbase.toString )
+									properties.put( "coinbase", coinbase.asInstanceOf[AnyRef] )
 								val inputoutputNode:Long = batchInserter.get.createNode( properties, inputoutputLabel.get )
 								batchInserter.get.createRelationship( inputoutputNode, txNode, supplies, null )
 							}
 							case None => {
-								val inputoutputNode:Long = getInputOutputNode(rpcInput.txid.get, rpcInput.vout.get, Map("input_index" -> index.toString))
+								val inputoutputNode:Long = getInputOutputNode(rpcInput.txid.get, rpcInput.vout.get, properties)
 								batchInserter.get.createRelationship( inputoutputNode, txNode, supplies, null )
 							}
 						}
@@ -192,7 +196,10 @@ object EmbeddedNeo4j2 {
 
 					// Outputs
 					for(rpcOutput <- rpcTransaction.vout){
-						val inputoutputNode:Long = getInputOutputNode(rpcTransaction.txid, rpcOutput.n, Map("value" -> rpcOutput.value.toString, "script_hex" -> rpcOutput.scriptPubKey.hex))
+						properties = new java.util.HashMap()
+							properties.put( "value", Converter.btcToSatoshi(rpcOutput.value).asInstanceOf[AnyRef] )
+							properties.put( "script_hex", rpcOutput.scriptPubKey.hex.asInstanceOf[AnyRef] )
+						val inputoutputNode:Long = getInputOutputNode(rpcTransaction.txid, rpcOutput.n, properties)
 						batchInserter.get.createRelationship( txNode, inputoutputNode, emits, null )
 
 						// Addresses
