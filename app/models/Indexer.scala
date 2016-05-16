@@ -14,8 +14,8 @@ object Indexer {
 	var indexer: Config = ConfigFactory.parseFile(new File("indexer.conf"))
 
 	var ticker:String = indexer.getString("ticker")
-	var currentBlockHash:String = indexer.getString("currentblock")
-	var currentBlockHeight:Long = 0
+	var currentBlockHash:String = ""
+	var currentBlockHeight:Long = indexer.getLong("currentblock")
 
 	var isSaving = false
 	def saveState(blockHeight:Long) = {

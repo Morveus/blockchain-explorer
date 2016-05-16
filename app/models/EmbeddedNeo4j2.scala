@@ -21,13 +21,12 @@ import org.neo4j.graphdb.Transaction;
 import org.neo4j.graphdb.factory.GraphDatabaseFactory;
 import org.neo4j.io.fs.FileUtils;
 import org.neo4j.graphdb.index.Index;
-import org.neo4j.graphdb.DynamicLabel;
 import org.neo4j.graphdb.Label;
 import org.neo4j.graphdb.ResourceIterator;
 
 import org.neo4j.unsafe.batchinsert.BatchInserter;
 import org.neo4j.unsafe.batchinsert.BatchInserters;
-import org.neo4j.graphdb.DynamicRelationshipType;
+import org.neo4j.graphdb.RelationshipType;
 
 import models._
 import utils._
@@ -44,32 +43,35 @@ object EmbeddedNeo4j2 {
 	var inputoutputLabel: Option[Label] = None
 	var addressLabel: Option[Label] = None
 
-	var follows:RelationshipType = DynamicRelationshipType.withName( "FOLLOWS" )
-	var contains:RelationshipType = DynamicRelationshipType.withName( "CONTAINS" )
-	var emits:RelationshipType = DynamicRelationshipType.withName( "EMITS" )
-	var supplies:RelationshipType = DynamicRelationshipType.withName( "SUPPLIES" )
-	var issentto:RelationshipType = DynamicRelationshipType.withName( "IS_SENT_TO" )
+	var follows:RelationshipType = RelationshipType.withName( "FOLLOWS" )
+	var contains:RelationshipType = RelationshipType.withName( "CONTAINS" )
+	var emits:RelationshipType = RelationshipType.withName( "EMITS" )
+	var supplies:RelationshipType = RelationshipType.withName( "SUPPLIES" )
+	var issentto:RelationshipType = RelationshipType.withName( "IS_SENT_TO" )
+
+	var isShutdowning:Boolean = false
 
 	def startService {
 		batchInserter = Some(BatchInserters.inserter( new File( DB_PATH ) ))
 		jedis = Some(Redis.jedis())
-		registerShutdownHookBatch(batchInserter.get, jedis.get)
+		registerShutdownHookBatch()
 
-		blockLabel = Some(DynamicLabel.label( "Block" ))
+		blockLabel = Some(Label.label( "Block" ))
 		batchInserter.get.createDeferredSchemaIndex( blockLabel.get ).on( "hash" ).create()
 
-		transactionLabel = Some(DynamicLabel.label( "Transaction" ))
+		transactionLabel = Some(Label.label( "Transaction" ))
 		batchInserter.get.createDeferredSchemaIndex( transactionLabel.get ).on( "hash" ).create()
 
-		inputoutputLabel = Some(DynamicLabel.label( "InputOutput" ))
+		inputoutputLabel = Some(Label.label( "InputOutput" ))
 
-		addressLabel = Some(DynamicLabel.label( "Address" ))
+		addressLabel = Some(Label.label( "Address" ))
 		batchInserter.get.createDeferredSchemaIndex( addressLabel.get ).on( "value" ).create()
 
 		ApiLogs.debug("started")
 	}
 
 	def stopService {
+		isShutdowning = true
 		batchInserter match {
 			case None => /* */
 			case Some(bi) => bi.shutdown()
@@ -81,13 +83,12 @@ object EmbeddedNeo4j2 {
 		ApiLogs.debug("shutdown")
 	}
 
-	private def registerShutdownHookBatch(bi:BatchInserter, jedis:Jedis) = {
+	private def registerShutdownHookBatch() = {
 		Runtime.getRuntime().addShutdownHook( new Thread()
 			{
 				override def run()
 				{
-					bi.shutdown()
-					jedis.close()
+					stopService
 				}
 			}
 	    )
@@ -142,7 +143,10 @@ object EmbeddedNeo4j2 {
 
 	def batchInsert(rpcBlock:RPCBlock, prevBlockNode:Option[Long], transactions:ListBuffer[RPCTransaction]):Future[Either[Exception,(String, Long)]] = {
 		Future {
-			try {				
+			try {	
+				if(isShutdowning){
+					throw new Exception("shutdown...")
+				}			
 
 				// Block
 				var properties:java.util.Map[String,Object] = new java.util.HashMap()
@@ -150,6 +154,7 @@ object EmbeddedNeo4j2 {
 					properties.put( "height", rpcBlock.height.asInstanceOf[AnyRef] )
 					properties.put( "time", rpcBlock.time.asInstanceOf[AnyRef] )
 					properties.put( "main_chain", true.asInstanceOf[AnyRef] )
+				
 				val blockNode:Long = batchInserter.get.createNode( properties, blockLabel.get )
 
 				// Parent Block relationship
@@ -217,7 +222,7 @@ object EmbeddedNeo4j2 {
 
 				}
 
-	      Right("Block '"+rpcBlock.hash+"' (n°"+rpcBlock.height.toString+") added !", blockNode)
+	      		Right("Block '"+rpcBlock.hash+"' (n°"+rpcBlock.height.toString+") added !", blockNode)
 
 			} catch {
 				case e:Exception => {
