@@ -47,23 +47,35 @@ object Neo4jBlockchainIndexer {
   implicit val transactionReads       = Json.reads[RPCTransaction]
   implicit val transactionWrites      = Json.writes[RPCTransaction]
 
-  implicit val esTransactionBlockReads  = Json.reads[NeoBlock ]
-  implicit val esTransactionBlockWrites = Json.writes[NeoBlock ]
-  
-  private def connectionParameters(ticker:String) = {
-    val ipNode = config.getString("coins."+ticker+".ipNode")
-    val rpcPort = config.getString("coins."+ticker+".rpcPort")
-    val rpcUser = config.getString("coins."+ticker+".rpcUser")
-    val rpcPass = config.getString("coins."+ticker+".rpcPass")
-    (ipNode, rpcPort, rpcUser, rpcPass) match {
-      case (Some(ip), Some(port), Some(user), Some(pass)) => ("http://"+ip+":"+port, user, pass)
-      case _ => throw new Exception("'coins."+ticker+".ipNode', 'coins."+ticker+".rpcPort', 'coins."+ticker+".rpcUser' or 'coins."+ticker+".rpcPass' are missing in application.conf")
+
+  def getBlockHash(ticker:String, blockHeight:Long) = {
+    blockchainsList(ticker).getBlockHash(ticker, blockHeight).map { response =>
+      (response \ "result") match {
+        case JsNull => {
+          ApiLogs.error("Block n°"+blockHeight+" not found")
+          Left(new Exception("Block n°"+blockHeight+" not found"))
+        }
+        case result: JsValue => {
+          result.validate[String] match {
+            case h: JsSuccess[String] => {
+              Right(h.get)
+            }
+            case e: JsError => {
+              ApiLogs.error("Invalid block n°"+blockHeight+" from RPC : "+response)
+              Left(new Exception("Invalid block n°"+blockHeight+" from RPC : "+response))
+            }
+          }
+        }
+        case _ => {
+          ApiLogs.error("Invalid block n°"+blockHeight+" from RPC : "+response)
+          Left(new Exception("Invalid block n°"+blockHeight+" from RPC : "+response))
+        }
+      }
     }
   }
-
   
 
-  def processBlock(ticker:String, blockHash:String, prevBlockNode:Option[Long] = None):Future[Either[Exception,(String, Long, Option[String])]] = {
+  def processBlock(ticker:String, blockHash:String, prevBlockNode:Option[Long] = None):Future[Either[Exception,(String, Long, Long, Option[String])]] = {
     getBlock(ticker, blockHash).flatMap { response =>
       response match {
         case Left(e) => Future(Left(e))
@@ -81,9 +93,6 @@ object Neo4jBlockchainIndexer {
               }
             }
           }
-
-
-          
         }
       }
     }
@@ -115,7 +124,7 @@ object Neo4jBlockchainIndexer {
     }
   }
 
-  private def indexFullBlock(ticker:String, rpcBlock:RPCBlock, prevBlockNode:Option[Long], transactions:ListBuffer[RPCTransaction]):Future[Either[Exception,(String, Long, Option[String])]] = {
+  private def indexFullBlock(ticker:String, rpcBlock:RPCBlock, prevBlockNode:Option[Long], transactions:ListBuffer[RPCTransaction]):Future[Either[Exception,(String, Long, Long, Option[String])]] = {
     EmbeddedNeo4j2.batchInsert(rpcBlock, prevBlockNode, transactions).map { result =>
       result match {
         case Left(e) => Left(e)
@@ -124,10 +133,10 @@ object Neo4jBlockchainIndexer {
 
           rpcBlock.nextblockhash match {
             case Some(nextblockhash) => {
-              Right(message, blockNode, rpcBlock.nextblockhash)
+              Right(message, blockNode, rpcBlock.height, rpcBlock.nextblockhash)
             }
             case None => {
-              Right(message, blockNode, None)
+              Right(message, blockNode, rpcBlock.height, None)
             }
           }
           

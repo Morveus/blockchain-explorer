@@ -13,17 +13,16 @@ object Indexer {
 
 	var indexer: Config = ConfigFactory.parseFile(new File("indexer.conf"))
 
+	var ticker:String = indexer.getString("ticker")
 	var currentBlockHash:String = indexer.getString("currentblock")
+	var currentBlockHeight:Long = 0
 
-	var toSave:Int = 0
 	var isSaving = false
-	def saveState(blockHash:String) = {
-		toSave += 1 
+	def saveState(blockHeight:Long) = {
 		Future {
-			if(toSave > 100 && isSaving == false){
-				toSave = 0
+			if(isSaving == false){
 				isSaving = true
-				indexer = indexer.withValue("currentblock", ConfigValueFactory.fromAnyRef(blockHash))
+				indexer = indexer.withValue("currentblock", ConfigValueFactory.fromAnyRef(blockHeight))
 
 				val renderOpts = ConfigRenderOptions.defaults().setOriginComments(false).setComments(false).setJson(false);
 				//println(indexer.root().render(renderOpts))
@@ -39,24 +38,24 @@ object Indexer {
 		
 	}
 
-	class ThreadIndexer(ticker:String) extends Runnable {
+	class ThreadIndexer() extends Runnable {
 	    def run() {
-	    	process(ticker, currentBlockHash)
+	    	process(currentBlockHash)
 	    }
 
-	    def process(ticker:String, blockHash:String, prevBlockNode:Option[Long] = None) {
+	    def process(blockHash:String, prevBlockNode:Option[Long] = None) {
 
 	  		Neo4jBlockchainIndexer.processBlock(ticker, blockHash, prevBlockNode).map { response =>
 	  			response match {
 	          case Right(q) => {
-	            var (message, blockNode, nextBlockHash) = q
+	            var (message, blockNode, blockHeight, nextBlockHash) = q
 	            ApiLogs.debug(message) //Block added
 
-	            saveState(blockHash)
+	            saveState(blockHeight)
 
 	            nextBlockHash match {
 	              case Some(next) => {
-	          		process(ticker, next, Some(blockNode))	                
+	          		process(next, Some(blockNode))	                
 	              }
 	              case None => {
 	                ApiLogs.debug("Blocks synchronized !")
@@ -72,7 +71,19 @@ object Indexer {
 	    }
 	}	
 
-	def start(ticker:String) = {
-		new Thread( new ThreadIndexer(ticker) ).start
+	def start() = {
+
+
+		Neo4jBlockchainIndexer.getBlockHash(ticker, currentBlockHeight).map { result =>
+			result match {
+				case Left(e) => ApiLogs.error("Neo4jBlockchainIndexer Exception : " + e.toString)
+				case Right(hash) => {
+					currentBlockHash = hash
+					new Thread( new ThreadIndexer() ).start
+				}
+			}			
+		}
+		
+		
 	}
 }
