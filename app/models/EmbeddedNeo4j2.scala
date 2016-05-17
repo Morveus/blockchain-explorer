@@ -34,7 +34,7 @@ import redis.clients.jedis._
 
 object EmbeddedNeo4j2 {
 	val config 	= play.Play.application.configuration
-	val DB_PATH = "graph-db"
+	val DB_PATH = Play.application.path.getPath + "/graph.db"
 
 	var jedis:Option[Jedis] = None
 	var batchInserter:Option[BatchInserter] = None
@@ -143,10 +143,10 @@ object EmbeddedNeo4j2 {
 
 	def batchInsert(rpcBlock:RPCBlock, prevBlockNode:Option[Long], transactions:ListBuffer[RPCTransaction]):Future[Either[Exception,(String, Long)]] = {
 		Future {
-			try {	
+			try {
 				if(isShutdowning){
 					throw new Exception("shutdown...")
-				}			
+				}
 
 				// Block
 				var properties:java.util.Map[String,Object] = new java.util.HashMap()
@@ -154,7 +154,7 @@ object EmbeddedNeo4j2 {
 					properties.put( "height", rpcBlock.height.asInstanceOf[AnyRef] )
 					properties.put( "time", rpcBlock.time.asInstanceOf[AnyRef] )
 					properties.put( "main_chain", true.asInstanceOf[AnyRef] )
-				
+
 				val blockNode:Long = batchInserter.get.createNode( properties, blockLabel.get )
 
 				// Parent Block relationship
@@ -217,7 +217,7 @@ object EmbeddedNeo4j2 {
 								}
 							}
 						}
-						
+
 					}
 
 				}
@@ -315,10 +315,10 @@ object EmbeddedNeo4j2 {
 				        		Left(new Exception("Transaction '"+tx.hash+"' not added !"))
 				        	}
 				        }
-	      			}      	
+	      			}
 	      		}else{
 	      			Future(Right("Transaction '"+tx.hash+"' added !"))
-	      		}	
+	      		}
 			} catch {
 				case e:Exception => {
 					Future(Left(e))
@@ -327,12 +327,12 @@ object EmbeddedNeo4j2 {
 		}
 	}
 
-	
+
 
 	private def prepareBlockQuery(block:NeoBlock, txHashes:List[String], previousBlockHash:Option[String]):String = {
 		var query = """
       MERGE (b:Block { hash: '"""+block.hash+"""' })
-      ON CREATE SET 
+      ON CREATE SET
         b.height = """+block.height+""",
         b.time = """+block.time+""",
         b.main_chain = """+block.main_chain+"""
@@ -376,7 +376,7 @@ object EmbeddedNeo4j2 {
 	    	if(countQueries == limitQueries){
 	    		if(queriesPool.size == 0){
 	    			query += """RETURN tx"""
-	    		}  		
+	    		}
 	    		queriesPool += query
 	    		query = """MATCH (tx:Transaction { hash: '"""+tx.hash+"""' })"""
 	    		countQueries = 0
@@ -396,13 +396,13 @@ object EmbeddedNeo4j2 {
 				"""
 	        }
 	      }
-	    } 
+	    }
 
 	    for((outIndex, output) <- outputs.toSeq.sortBy(_._1)){
 	    	if(countQueries == limitQueries){
 	    		if(queriesPool.size == 0){
 					query += """RETURN tx"""
-				}  
+				}
 	    		queriesPool += query
 	    		query = """MATCH (tx:Transaction { hash: '"""+tx.hash+"""' })"""
 	    		countQueries = 0
@@ -425,7 +425,7 @@ object EmbeddedNeo4j2 {
 
 	    if(queriesPool.size == 0){
 			query += """RETURN tx"""
-		}  
+		}
     	queriesPool += query
 
     	if(queriesPool.size == 1){
