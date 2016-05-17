@@ -34,7 +34,7 @@ import redis.clients.jedis._
 
 object Neo4jBatchInserter {
 	val config 	= play.Play.application.configuration
-	val DB_PATH = "graph-db"
+	val DB_PATH = Play.application.path.getPath + "/graph.db"
 
 	var jedis:Option[Jedis] = None
 	var batchInserter:Option[BatchInserter] = None
@@ -143,10 +143,10 @@ object Neo4jBatchInserter {
 
 	def batchInsert(rpcBlock:RPCBlock, prevBlockNode:Option[Long], transactions:ListBuffer[RPCTransaction]):Future[Either[Exception,(String, Long)]] = {
 		Future {
-			try {	
+			try {
 				if(isShutdowning){
 					throw new Exception("shutdown...")
-				}			
+				}
 
 				// Block
 				var properties:java.util.Map[String,Object] = new java.util.HashMap()
@@ -154,7 +154,7 @@ object Neo4jBatchInserter {
 					properties.put( "height", rpcBlock.height.asInstanceOf[AnyRef] )
 					properties.put( "time", rpcBlock.time.asInstanceOf[AnyRef] )
 					properties.put( "main_chain", true.asInstanceOf[AnyRef] )
-				
+
 				val blockNode:Long = batchInserter.get.createNode( properties, blockLabel.get )
 
 				// Parent Block relationship
@@ -217,7 +217,7 @@ object Neo4jBatchInserter {
 								}
 							}
 						}
-						
+
 					}
 
 				}
