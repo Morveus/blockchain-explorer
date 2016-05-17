@@ -1,0 +1,11 @@
+
+GET      /v1/:coin/blocks/current                                 controllers.RESTApi.getCurrentBlock(coin: String)
+
+GET      /v1/:coin/addresses/:addressesHashes/transactions        controllers.RESTApi.getAddressesTransactions(coin: String, addressesHashes: String, blockHash: Option[String])
+GET      /v1/:coin/addresses/:addressesHashes/unspents            controllers.RESTApi.getAddressesUnspents(coin: String, addressesHashes: String)
+
+POST     /v1/:coin/transactions/send                              controllers.RESTApi.sendTransaction(coin: String)
+GET      /v1/:coin/transactions/:txsHashes                        controllers.RESTApi.getTransactions(coin: String, txsHashes: String)
+GET      /v1/:coin/transactions/:transactionHash/hex              controllers.RESTApi.getTransactionsHex(coin: String, transactionHash: String)
+
+

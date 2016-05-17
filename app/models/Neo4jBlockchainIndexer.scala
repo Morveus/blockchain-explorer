@@ -125,7 +125,7 @@ object Neo4jBlockchainIndexer {
   }
 
   private def indexFullBlock(ticker:String, rpcBlock:RPCBlock, prevBlockNode:Option[Long], transactions:ListBuffer[RPCTransaction]):Future[Either[Exception,(String, Long, Long, Option[String])]] = {
-    EmbeddedNeo4j2.batchInsert(rpcBlock, prevBlockNode, transactions).map { result =>
+    Neo4jBatchInserter.batchInsert(rpcBlock, prevBlockNode, transactions).map { result =>
       result match {
         case Left(e) => Left(e)
         case Right(r) => {
@@ -247,98 +247,4 @@ object Neo4jBlockchainIndexer {
       }
     }
   }
-
-
-/*
-  
-
-  private def indexTransaction(ticker:String, rpcTx:RPCTransaction):Future[Either[Exception,String]] = {
-
-      //on récupère les informations qui nous manquent concernant la transaction
-      var resultsFuts: ListBuffer[Future[Unit]] = ListBuffer()
-
-      var inputs: Map[Int, NeoInput] = Map()
-      var outputs: Map[Int, NeoOutput] = Map()
-      
-      var previousOuts = Map[String, List[(Int, Int)]]()
-      for((vin, i) <- rpcTx.vin.zipWithIndex){
-        vin.coinbase match {
-          case Some(c) => {
-            //generation transaction
-            inputs(i) = NeoInput(i, Some(c), None, None)
-          }
-          case None => {
-            //standard transaction
-            inputs(i) = NeoInput(i, None, Some(vin.vout.get.toInt), Some(vin.txid.get))
-          }
-        }
-      }
-
-      for(vout <- rpcTx.vout){
-        outputs(vout.n.toInt) = NeoOutput(vout.n.toInt, satoshi(vout.value), vout.scriptPubKey.hex, vout.scriptPubKey.addresses.getOrElse(List[String]()))
-      }      
-
-      def finalizeTransaction:Future[Either[Exception,String]] = {
-        val tx = NeoTransaction(rpcTx.txid, rpcTx.locktime, None, None)
-
-        EmbeddedNeo4j2.addTransaction(ticker, tx, inputs, outputs).flatMap { response =>
-          response
-        }
-      }
-
-      if(resultsFuts.size > 0) {
-        val futuresResponses: Future[ListBuffer[Unit]] = Future.sequence(resultsFuts)
-        futuresResponses.flatMap { responses =>
-          finalizeTransaction
-        }
-      }else{
-        finalizeTransaction
-      }
-  }
-	
-
-  def startAt(ticker:String, fromBlockHash:String):Future[Either[Exception,String]] = {
-    getBlock(ticker, fromBlockHash)
-  }
-
-
-
-  def resume(ticker:String, force:Boolean = false):Future[Either[Exception,String]] = {
-    //on reprend la suite de l'indexation à partir de l'avant dernier block stocké (si le dernier n'a pas été ajouté correctement) dans notre bdd
-    EmbeddedNeo4j2.getBeforeLastBlockHash(ticker).flatMap { response =>
-      response match {
-        case Right(beforeLastBlockHash) => {
-          beforeLastBlockHash match {
-            case Some(b) => {
-              startAt(ticker, b)
-            }
-            case None => {
-              force match {
-                case true => restart(ticker)
-                case false => {
-                  ApiLogs.error("No blocks found, can't resume")
-                  Future(Left(new Exception("No blocks found, can't resume")))
-                }
-              }
-            }
-          }
-        }
-        case Left(e) => Future(Left(e))
-      }
-    }
-
-    /*
-      TODO:
-      vérifier qu'il n'y a pas eu de réorg avant de reprendre l'indexation
-    */
-  }
-
-  def restart(ticker:String):Future[Either[Exception,String]] = {
-    //on recommence l'indexation à partir du block genesis
-    val genesisBlock = config.getString("coins."+ticker+".genesisBlock").get
-    startAt(ticker, genesisBlock)
-  }
-
-  */
-
 }
