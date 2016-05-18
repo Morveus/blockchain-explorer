@@ -75,7 +75,7 @@ object Neo4jBlockchainIndexer {
   }
   
 
-  def processBlock(ticker:String, blockHash:String, prevBlockNode:Option[Long] = None):Future[Either[Exception,(String, Long, Long, Option[String])]] = {
+  def processBlock(mode:String, ticker:String, blockHash:String, prevBlockNode:Option[Long] = None):Future[Either[Exception,(String, Long, Long, Option[String])]] = {
     getBlock(ticker, blockHash).flatMap { response =>
       response match {
         case Left(e) => Future(Left(e))
@@ -84,9 +84,7 @@ object Neo4jBlockchainIndexer {
           exploreTransactionsAsync(ticker, rpcBlock, 0).flatMap { response =>
             response match {
               case Right(txs) => {
-
-                indexFullBlock(ticker, rpcBlock, prevBlockNode, txs)
-
+                indexFullBlock(mode, ticker, rpcBlock, prevBlockNode, txs)
               }
               case Left(e) => {
                 Future(Left(e))
@@ -98,7 +96,7 @@ object Neo4jBlockchainIndexer {
     }
   }
 
-  private def getBlock(ticker:String, blockHash:String):Future[Either[Exception,RPCBlock]] = {
+  def getBlock(ticker:String, blockHash:String):Future[Either[Exception,RPCBlock]] = {
     blockchainsList(ticker).getBlock(ticker, blockHash).map { response =>
       (response \ "result") match {
         case JsNull => {
@@ -124,8 +122,14 @@ object Neo4jBlockchainIndexer {
     }
   }
 
-  private def indexFullBlock(ticker:String, rpcBlock:RPCBlock, prevBlockNode:Option[Long], transactions:ListBuffer[RPCTransaction]):Future[Either[Exception,(String, Long, Long, Option[String])]] = {
-    Neo4jBatchInserter.batchInsert(rpcBlock, prevBlockNode, transactions).map { result =>
+  private def indexFullBlock(mode:String, ticker:String, rpcBlock:RPCBlock, prevBlockNode:Option[Long], transactions:ListBuffer[RPCTransaction]):Future[Either[Exception,(String, Long, Long, Option[String])]] = {
+
+    var method = mode match {
+      case "batch" => Neo4jBatchInserter.batchInsert(rpcBlock, prevBlockNode, transactions)
+      case _ => Neo4jEmbedded.insert(rpcBlock, transactions)
+    }
+
+    method.map { result =>
       result match {
         case Left(e) => Left(e)
         case Right(r) => {

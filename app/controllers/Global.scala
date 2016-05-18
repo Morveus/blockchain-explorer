@@ -12,13 +12,7 @@ object Global extends WithFilters(new GzipFilter(shouldGzip = (request, response
   override def onStart(app: Application) {
     ApiLogs.info("BlockchainExplorer API started")
 
-    // Neo4jBatchInserter.dropDb
-    // Neo4jBatchInserter.startService 
-    // Neo4jBatchInserter.cleanRedis
-    //Indexer.start()
-
-    Neo4jEmbedded.startService
-
+    Indexer.start()
   }
 
   override def onStop(app: Application) {

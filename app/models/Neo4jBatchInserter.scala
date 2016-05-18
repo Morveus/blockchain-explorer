@@ -36,6 +36,8 @@ object Neo4jBatchInserter {
 	val config 	= play.Play.application.configuration
 	val DB_PATH = Play.application.path.getPath + "/graph.db"
 
+	var ticker:String = ""
+
 	var jedis:Option[Jedis] = None
 	var batchInserter:Option[BatchInserter] = None
 	var blockLabel: Option[Label] = None
@@ -51,36 +53,45 @@ object Neo4jBatchInserter {
 
 	var isShutdowning:Boolean = false
 
-	def startService {
+	def startService(coin: String) {
+		ApiLogs.debug("Neo4jBatchInserter start...")
 		batchInserter = Some(BatchInserters.inserter( new File( DB_PATH ) ))
+
+		ticker = coin
+
 		jedis = Some(Redis.jedis())
+
 		registerShutdownHookBatch()
 
 		blockLabel = Some(Label.label( "Block" ))
-		batchInserter.get.createDeferredSchemaIndex( blockLabel.get ).on( "hash" ).create()
-
 		transactionLabel = Some(Label.label( "Transaction" ))
-		batchInserter.get.createDeferredSchemaIndex( transactionLabel.get ).on( "hash" ).create()
-
 		inputoutputLabel = Some(Label.label( "InputOutput" ))
-
 		addressLabel = Some(Label.label( "Address" ))
-		batchInserter.get.createDeferredSchemaIndex( addressLabel.get ).on( "value" ).create()
 
-		ApiLogs.debug("started")
+		ApiLogs.debug("Neo4jBatchInserter started")
+	}
+
+	def init() {
+		batchInserter.get.createDeferredSchemaIndex( blockLabel.get ).on( "hash" ).create()
+		batchInserter.get.createDeferredSchemaIndex( transactionLabel.get ).on( "hash" ).create()
+		batchInserter.get.createDeferredSchemaIndex( addressLabel.get ).on( "value" ).create()
 	}
 
 	def stopService {
 		isShutdowning = true
 		batchInserter match {
 			case None => /* */
-			case Some(bi) => bi.shutdown()
+			case Some(bi) => {
+				ApiLogs.debug("Neo4jBatchInserter shutting down...")
+				bi.shutdown()
+				ApiLogs.debug("Neo4jBatchInserter shutdown ")
+			}
 		}
 		jedis match {
 			case None => /* */
 			case Some(j) => j.close()
 		}
-		ApiLogs.debug("shutdown")
+		isShutdowning = false
 	}
 
 	private def registerShutdownHookBatch() = {
@@ -99,13 +110,13 @@ object Neo4jBatchInserter {
 	}
 
 	def cleanRedis {
-		Redis.dels(jedis.get, "blockchain-explorer:address:*")
-		Redis.dels(jedis.get, "blockchain-explorer:inputoutput:*")
+		Redis.dels(jedis.get, "blockchain-explorer:"+ticker+":address:*")
+		Redis.dels(jedis.get, "blockchain-explorer:"+ticker+":inputoutput:*")
 	}
 
 
 	private def getInputOutputNode(txHash: String, outputIndex:Long, data:java.util.Map[String,Object] = Map[String, Object]()):Long = {
-		Redis.get(jedis.get, "blockchain-explorer:inputoutput:"+txHash+":"+outputIndex) match {
+		Redis.get(jedis.get, "blockchain-explorer:"+ticker+":inputoutput:"+txHash+":"+outputIndex) match {
 			case Some(inputoutputNodeS) => {
 				val inputoutputNode:Long = inputoutputNodeS.toLong
 
@@ -121,20 +132,20 @@ object Neo4jBatchInserter {
 					properties.put( "output_index", outputIndex.asInstanceOf[AnyRef] )
 					properties.putAll(data)
 				val inputoutputNode:Long = batchInserter.get.createNode( properties, inputoutputLabel.get )
-				Redis.set(jedis.get, "blockchain-explorer:inputoutput:"+txHash+":"+outputIndex, inputoutputNode.toString)
+				Redis.set(jedis.get, "blockchain-explorer:"+ticker+":inputoutput:"+txHash+":"+outputIndex, inputoutputNode.toString)
 				inputoutputNode
 			}
 		}
 	}
 
 	private def getAddressNode(address: String):Long = {
-		Redis.get(jedis.get, "blockchain-explorer:address:"+address) match {
+		Redis.get(jedis.get, "blockchain-explorer:"+ticker+":address:"+address) match {
 			case Some(addressNode) => addressNode.toLong
 			case None => {
 				var properties:java.util.Map[String,Object] = new java.util.HashMap()
 					properties.put( "value", address.asInstanceOf[AnyRef] )
 				val addressNode:Long = batchInserter.get.createNode( properties, addressLabel.get )
-				Redis.set(jedis.get, "blockchain-explorer:address:"+address, addressNode.toString)
+				Redis.set(jedis.get, "blockchain-explorer:"+ticker+":address:"+address, addressNode.toString)
 				addressNode
 			}
 		}
