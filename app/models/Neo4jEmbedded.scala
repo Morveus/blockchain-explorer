@@ -28,13 +28,16 @@ import org.neo4j.unsafe.batchinsert.BatchInserter;
 import org.neo4j.unsafe.batchinsert.BatchInserters;
 import org.neo4j.graphdb.RelationshipType;
 
+import com.typesafe.config._
+
 import models._
 import utils._
 import redis.clients.jedis._
 
 object Neo4jEmbedded {
 	val config 	= play.Play.application.configuration
-	val DB_PATH = "graph.db"
+	val configIndexer:Config = ConfigFactory.parseFile(new File("indexer.conf"))
+	val DB_PATH = Play.application.path.getPath + "/" + configIndexer.getString("dbname")
 
 	var db:Option[GraphDatabaseService] = None    
 
@@ -89,10 +92,10 @@ object Neo4jEmbedded {
 	    )
 	}
 
-	def getBlockNode(height:Long):Future[Either[Exception, Long]] = {
+	def getBlockNode(hash:String):Future[Either[Exception, Long]] = {
 		Future {
 			try {	
-				val query = "MATCH (b:Block {height:"+height+"}) RETURN ID(b) as id"
+				val query = "MATCH (b:Block {hash:'"+hash+"'}) RETURN ID(b) as id"
 				val resultIterator:ResourceIterator[Long] = db.get.execute( query ).columnAs( "id" )
 				val blockNode:Long = resultIterator.next()
 				//val blockNode:Long = node.getProperty("id").toString.toLong

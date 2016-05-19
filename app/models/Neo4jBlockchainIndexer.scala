@@ -47,33 +47,7 @@ object Neo4jBlockchainIndexer {
   implicit val transactionReads       = Json.reads[RPCTransaction]
   implicit val transactionWrites      = Json.writes[RPCTransaction]
 
-
-  def getBlockHash(ticker:String, blockHeight:Long) = {
-    blockchainsList(ticker).getBlockHash(ticker, blockHeight).map { response =>
-      (response \ "result") match {
-        case JsNull => {
-          ApiLogs.error("Block n°"+blockHeight+" not found")
-          Left(new Exception("Block n°"+blockHeight+" not found"))
-        }
-        case result: JsValue => {
-          result.validate[String] match {
-            case h: JsSuccess[String] => {
-              Right(h.get)
-            }
-            case e: JsError => {
-              ApiLogs.error("Invalid block n°"+blockHeight+" from RPC : "+response)
-              Left(new Exception("Invalid block n°"+blockHeight+" from RPC : "+response))
-            }
-          }
-        }
-        case _ => {
-          ApiLogs.error("Invalid block n°"+blockHeight+" from RPC : "+response)
-          Left(new Exception("Invalid block n°"+blockHeight+" from RPC : "+response))
-        }
-      }
-    }
-  }
-  
+ 
 
   def processBlock(mode:String, ticker:String, blockHash:String, prevBlockNode:Option[Long] = None):Future[Either[Exception,(String, Long, Long, Option[String])]] = {
     getBlock(ticker, blockHash).flatMap { response =>

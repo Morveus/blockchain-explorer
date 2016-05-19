@@ -9,104 +9,95 @@ import com.typesafe.config._
 import java.io._
 
 object Indexer {
-	val config = play.api.Play.configuration
+  val config = play.api.Play.configuration
 
-	var indexer: Config = ConfigFactory.parseFile(new File("indexer.conf"))
+  var indexer: Config = ConfigFactory.parseFile(new File("indexer.conf"))
 
-	var batchmod:Boolean = indexer.getBoolean("batchmod")
-	var ticker:String = indexer.getString("ticker")
-	var currentBlockHeight:Long = indexer.getLong("currentblock")
-	var currentBlockHash:String = ""
+  var batchmod:Boolean = indexer.getBoolean("batchmod")
+  var ticker:String = indexer.getString("ticker")
+  //var currentBlockHeight:Long = indexer.getLong("currentblock")
+  var currentBlockHash:String = indexer.getString("currentblock")
 
-	var isSaving = false
-	def saveState(blockHeight:Long) = {
-		Future {
-			if(isSaving == false){
-				isSaving = true
-				indexer = indexer.withValue("currentblock", ConfigValueFactory.fromAnyRef(blockHeight))
+  val genesisBlockHash:String = config.getString("coins."+ticker+".genesisBlock").get
 
-				val renderOpts = ConfigRenderOptions.defaults().setOriginComments(false).setComments(false).setJson(false);
-				//println(indexer.root().render(renderOpts))
+  var isSaving = false
+  def saveState(blockHash:String) = {
+    Future {
+      if(isSaving == false){
+        isSaving = true
+        indexer = indexer.withValue("currentblock", ConfigValueFactory.fromAnyRef(blockHash))
 
-				val file = new File("indexer.conf")
-				val bw = new BufferedWriter(new FileWriter(file))
-				bw.write(indexer.root().render(renderOpts))
-				bw.close()
+        val renderOpts = ConfigRenderOptions.defaults().setOriginComments(false).setComments(false).setJson(false);
+        //println(indexer.root().render(renderOpts))
 
-				isSaving = false
-			}
-		}
-		
-	}
+        val file = new File("indexer.conf")
+        val bw = new BufferedWriter(new FileWriter(file))
+        bw.write(indexer.root().render(renderOpts))
+        bw.close()
 
-	def start() = {
-		Neo4jBlockchainIndexer.getBlockHash(ticker, currentBlockHeight).map { result =>
-			result match {
-				case Left(e) => {
-					ApiLogs.error("Neo4jBlockchainIndexer Exception : " + e.toString)
-				}
-				case Right(hash) => {
-					currentBlockHash = hash
+        isSaving = false
+      }
+    }
 
-					batchmod match {
-						case true => startBatchMod()
-						case false => startStandardMod()
-					}
-				}
-			}			
-		}
-	}
+  }
 
-	private def startBatchMod() = {
-		
-		//On regarde s'il y a une reprise à faire:
-		if(currentBlockHeight > 0){
+  def start() = {
+    batchmod match {
+      case true => startBatchMod()
+      case false => startStandardMod()
+    }
+  }
 
-			Neo4jBlockchainIndexer.getBlock(ticker, currentBlockHash).map { response =>
-				response match {
-	        case Left(e) => ApiLogs.error("Neo4jBlockchainIndexer Exception : " + e.toString)
-	        case Right(rpcBlock) => {
-	        	rpcBlock.nextblockhash match {
-	        		case None => ApiLogs.debug("Blocks synchronized !")
-	        		case Some(b) => {
-	        			Neo4jEmbedded.startService
-								Neo4jEmbedded.getBlockNode(currentBlockHeight).map { result =>
-									Neo4jEmbedded.stopService
-									result match {
-										case Right(nodeId) => {
-											Neo4jBatchInserter.startService(ticker)
-											process(b, Some(nodeId))
-										}
-										case Left(e) => {
-											ApiLogs.error("Indexer Exception : "+e.toString)
-										}
-									}
-								}
-	        		}
-	        	}
-	        }
-	      }
-	    }			
-		}else{
-			Neo4jBatchInserter.dropDb
-			Neo4jBatchInserter.startService(ticker)
-			Neo4jBatchInserter.init
-			Neo4jBatchInserter.cleanRedis
-			process(currentBlockHash)
-		}
+  private def startBatchMod() = {
 
-		def process(blockHash:String, prevBlockNode:Option[Long] = None) {
-  		Neo4jBlockchainIndexer.processBlock("batch", ticker, blockHash, prevBlockNode).map { response =>
-  			response match {
+    //On regarde s'il y a une reprise à faire:
+    if(currentBlockHash != genesisBlockHash){
+
+      Neo4jBlockchainIndexer.getBlock(ticker, currentBlockHash).map { response =>
+        response match {
+         case Left(e) => ApiLogs.error("Neo4jBlockchainIndexer Exception : " + e.toString)
+          case Right(rpcBlock) => {
+            rpcBlock.nextblockhash match {
+              case None => ApiLogs.debug("Blocks synchronized !")
+              case Some(b) => {
+                Neo4jEmbedded.startService
+                Neo4jEmbedded.getBlockNode(currentBlockHash).map { result =>
+                  Neo4jEmbedded.stopService
+                  result match {
+                    case Right(nodeId) => {
+                      Neo4jBatchInserter.startService(ticker)
+                      process(b, Some(nodeId))
+                    }
+                    case Left(e) => {
+                      ApiLogs.error("Indexer Exception : "+e.toString)
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }			
+    }else{
+      Neo4jBatchInserter.dropDb
+      Neo4jBatchInserter.startService(ticker)
+      Neo4jBatchInserter.init
+      Neo4jBatchInserter.cleanRedis
+      process(currentBlockHash)
+    }
+
+    def process(blockHash:String, prevBlockNode:Option[Long] = None) {
+      Neo4jBlockchainIndexer.processBlock("batch", ticker, blockHash, prevBlockNode).map { response =>
+        response match {
           case Right(q) => {
             var (message, blockNode, blockHeight, nextBlockHash) = q
             ApiLogs.debug(message) //Block added
 
-            saveState(blockHeight)
+            saveState(blockHash)
 
             nextBlockHash match {
               case Some(next) => {
-          			process(next, Some(blockNode))	                
+                process(next, Some(blockNode))	                
               }
               case None => {
                 ApiLogs.debug("Blocks synchronized !")
@@ -121,41 +112,41 @@ object Indexer {
             Neo4jBatchInserter.stopService
           }
         }
-	  	}		
+      }		
     }
+  }
 
-	}
 
-	private def startStandardMod() = {
+  private def startStandardMod() = {
 
-		Neo4jBlockchainIndexer.getBlock(ticker, currentBlockHash).map { response =>
-			response match {
+    Neo4jBlockchainIndexer.getBlock(ticker, currentBlockHash).map { response =>
+      response match {
         case Left(e) => ApiLogs.error("Neo4jBlockchainIndexer Exception : " + e.toString)
         case Right(rpcBlock) => {
-        	rpcBlock.nextblockhash match {
-        		case None => ApiLogs.debug("Blocks synchronized !")
-        		case Some(b) => {
-        			Neo4jEmbedded.startService
-        			//Neo4jEmbedded.cleanDB(currentBlockHash)
-        			process(b)
-        		}
-        	}
+          rpcBlock.nextblockhash match {
+            case None => ApiLogs.debug("Blocks synchronized !")
+            case Some(b) => {
+              Neo4jEmbedded.startService
+              //Neo4jEmbedded.cleanDB(currentBlockHash)
+              process(b)
+            }
+          }
         }
       }
     }
 
-		def process(blockHash:String) {
-			Neo4jBlockchainIndexer.processBlock("standard", ticker, blockHash).map { response =>
-				response match {
+    def process(blockHash:String) {
+      Neo4jBlockchainIndexer.processBlock("standard", ticker, blockHash).map { response =>
+        response match {
           case Right(q) => {
             var (message, blockNode, blockHeight, nextBlockHash) = q
             ApiLogs.debug(message) //Block added
 
-            saveState(blockHeight)
+            saveState(blockHash)
 
             nextBlockHash match {
               case Some(next) => {
-          			process(next)	                
+                process(next)	                
               }
               case None => {
                 ApiLogs.debug("Blocks synchronized !")
@@ -167,10 +158,7 @@ object Indexer {
             Neo4jEmbedded.stopService
           }
         }
-			}
-		}
-
-	}
-
-
+      }
+    }
+  }
 }

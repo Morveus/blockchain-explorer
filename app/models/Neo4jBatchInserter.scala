@@ -28,13 +28,17 @@ import org.neo4j.unsafe.batchinsert.BatchInserter;
 import org.neo4j.unsafe.batchinsert.BatchInserters;
 import org.neo4j.graphdb.RelationshipType;
 
+import com.typesafe.config._
+
 import models._
 import utils._
 import redis.clients.jedis._
 
 object Neo4jBatchInserter {
 	val config 	= play.Play.application.configuration
-	val DB_PATH = Play.application.path.getPath + "/graph.db"
+
+	val configIndexer:Config = ConfigFactory.parseFile(new File("indexer.conf"))
+	val DB_PATH = Play.application.path.getPath + "/" + configIndexer.getString("dbname")
 
 	var ticker:String = ""
 
