@@ -92,21 +92,98 @@ object Neo4jEmbedded {
 	    )
 	}
 
-	def getBlockNode(hash:String):Future[Either[Exception, Long]] = {
+	def exist(hash:String):Future[Either[Exception, Boolean]] = {
+		Future {
+			val graphDb = db.get
+			var tx:Transaction = graphDb.beginTx()
+			try {	
+				val blockNode:Node = graphDb.findNode( blockLabel.get, "hash", hash )
+				val exist = blockNode.hasLabel( blockLabel.get )
+				Right(true)
+			} catch {
+				case e:Exception => {
+					Right(false)
+				}
+			}finally {
+				tx.close()
+			}
+		}
+		
+	}
+
+	def getBlockNode(hash:String):Future[Either[Exception, Option[Long]]] = {
 		Future {
 			try {	
 				val query = "MATCH (b:Block {hash:'"+hash+"'}) RETURN ID(b) as id"
 				val resultIterator:ResourceIterator[Long] = db.get.execute( query ).columnAs( "id" )
-				val blockNode:Long = resultIterator.next()
-				//val blockNode:Long = node.getProperty("id").toString.toLong
-				println("blockNode : "+blockNode)
-
-				Right(blockNode)
+				if ( resultIterator.hasNext() ){
+					val blockNode:Long = resultIterator.next()
+					Right(Some(blockNode))
+				}else{
+					Right(None)
+				}
 			} catch {
 				case e:Exception => {
 					Left(e)
 				}
 			}
+		}
+	}
+
+	def getBlockChildren(hash:String):Future[Either[Exception, List[String]]] = {
+		Future {
+			val graphDb = db.get
+			try {	
+				val query = "MATCH (b:Block {hash: '"+hash+"'})<-[:FOLLOWS]-(nextBlock:Block) RETURN nextBlock"
+				var result:org.neo4j.graphdb.Result = graphDb.execute( query )
+				val childrenNode:ResourceIterator[Node] = result.columnAs( "nextBlock" )
+				var response:ListBuffer[String] = ListBuffer()
+				while(childrenNode.hasNext()){
+					val childNode:Node = childrenNode.next()
+					response += childNode.getProperty( "hash" ).toString
+				}
+				// for ( childNode <- Iterators.asIterable( childrenNode ) )
+				// {
+				//     response += childNode.getProperty( "hash" )
+				// }
+
+				Right(response.toList)
+			} catch {
+				case e:Exception => {
+					Left(e)
+				}
+			}
+		}
+	}
+
+	def notMainchain(hash:String):Future[Either[Exception, String]] = {
+		Future {
+			val graphDb = db.get
+			var tx:Transaction = graphDb.beginTx()
+			println("notMainchain")
+			try {
+
+				if(isShutdowning){
+					throw new Exception("shutdown...")
+				}
+
+				val blockNode:Node = graphDb.findNode( blockLabel.get, "hash", hash )
+				println("hash: "+blockNode.getProperty("hash"))
+				blockNode.setProperty("main_chain", false)
+				println("main_chain: "+blockNode.getProperty("main_chain"))
+				println("trololo")
+				tx.success()
+
+	      		Right("Block '"+hash+"' setMainchain = false !")
+
+			} catch {
+				case e:Exception => {
+					Left(e)
+				}
+			}
+			finally {
+				tx.close()
+			}	
 		}
 	}
 
@@ -208,7 +285,7 @@ object Neo4jEmbedded {
 		Future {
 
 			val graphDb = db.get
-			var tx:Transaction = db.get.beginTx()
+			var tx:Transaction = graphDb.beginTx()
 
 			try {
 

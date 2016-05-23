@@ -16,4 +16,10 @@ object Application extends Controller {
   def index = Action { 
     Ok
   }
+
+  def newblock(blockHash:String) = Action {
+    Indexer.newblock(blockHash)
+    Ok
+  }
+
 }
