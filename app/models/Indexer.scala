@@ -44,14 +44,10 @@ object Indexer {
   }
 
   def start() = {
-    // batchmod match {
-    //   case true => startBatchMod()
-    //   case false => startStandardMod()
-    // }
-
-      
-    Neo4jEmbedded.startService
-    println("lauched")
+    batchmod match {
+      case true => startBatchMod()
+      case false => startStandardMod()
+    }
   }
 
   def newblock(blockHash:String) = {

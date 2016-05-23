@@ -333,6 +333,7 @@ object Neo4jEmbedded {
 						}
         				
         				inputNode.setProperty( "input_index", index )
+        				inputNode.setProperty( "sequence", rpcInput.sequence )
 
 						rpcInput.txinwitness match {
 							case None => /* nothing */
@@ -345,7 +346,9 @@ object Neo4jEmbedded {
 							case Some(coinbase) => {
 								inputNode.setProperty( "coinbase", coinbase )
 							}
-							case None => /* Nothing */
+							case None => {
+								inputNode.setProperty( "script_signature", rpcInput.scriptSig.get.hex )
+							}
 						}
 
 						inputNode.createRelationshipTo( txNode, supplies )

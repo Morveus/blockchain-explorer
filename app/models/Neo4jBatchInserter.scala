@@ -193,6 +193,8 @@ object Neo4jBatchInserter {
 					for((rpcInput, index) <- rpcTransaction.vin.zipWithIndex){
 						properties = new java.util.HashMap()
 							properties.put( "input_index", index.asInstanceOf[AnyRef] )
+							properties.put( "sequence", rpcInput.sequence.asInstanceOf[AnyRef] )
+
 
 						rpcInput.txinwitness match {
 							case None => /* nothing */
@@ -208,6 +210,7 @@ object Neo4jBatchInserter {
 								batchInserter.get.createRelationship( inputoutputNode, txNode, supplies, null )
 							}
 							case None => {
+								properties.put( "script_signature", rpcInput.scriptSig.get.hex.asInstanceOf[AnyRef])
 								val inputoutputNode:Long = getInputOutputNode(rpcInput.txid.get, rpcInput.vout.get, properties)
 								batchInserter.get.createRelationship( inputoutputNode, txNode, supplies, null )
 							}
