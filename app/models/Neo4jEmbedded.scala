@@ -317,6 +317,7 @@ object Neo4jEmbedded {
     				txNode.setProperty( "hash", rpcTransaction.txid )
     				txNode.setProperty( "received_at", rpcBlock.time )
     				txNode.setProperty( "lock_time", rpcTransaction.locktime )
+    				txNode.setProperty( "hex", rpcTransaction.hex )
 
         			blockNode.createRelationshipTo( txNode, contains )
         			

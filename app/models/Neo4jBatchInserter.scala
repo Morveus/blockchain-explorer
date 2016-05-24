@@ -186,6 +186,7 @@ object Neo4jBatchInserter {
 						properties.put( "hash", rpcTransaction.txid.asInstanceOf[AnyRef] )
 						properties.put( "received_at", rpcBlock.time.asInstanceOf[AnyRef] )
 						properties.put( "lock_time", rpcTransaction.locktime.asInstanceOf[AnyRef] )
+						properties.put( "hex", rpcTransaction.hex.asInstanceOf[AnyRef] )
 					val txNode:Long = batchInserter.get.createNode( properties, transactionLabel.get )
 					batchInserter.get.createRelationship( blockNode, txNode, contains, null )
 

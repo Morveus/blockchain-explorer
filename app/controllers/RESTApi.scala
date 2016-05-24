@@ -15,10 +15,6 @@ import scala.util.{Success, Failure}
 
 object RESTApi extends Controller {
 
-  def getTransactionsHex(coin: String, transactionHash: String) = Action {
-  	Ok("")
-  }
-
   def sendTransaction(coin: String) = Action {
   	Ok("")
   }

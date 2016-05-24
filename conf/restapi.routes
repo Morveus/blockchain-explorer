@@ -1,5 +1,4 @@
 
-GET      /v1/:coin/transactions/:transactionHash/hex              controllers.RESTApi.getTransactionsHex(coin: String, transactionHash: String)
 POST     /v1/:coin/transactions/send                              controllers.RESTApi.sendTransaction(coin: String)
 
 

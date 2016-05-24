@@ -20,7 +20,8 @@ case class RPCTransaction(
   version: Long,
   locktime: Long,
   vin: List[RPCTransactionVIn],
-  vout: List[RPCTransactionVOut]
+  vout: List[RPCTransactionVOut],
+  hex: String
 )
 
 case class RPCTransactionVIn(
