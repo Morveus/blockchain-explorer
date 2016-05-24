@@ -1,9 +1,17 @@
 package models
 
 import play.api.Play.current
+import play.api.libs.concurrent._
 import scala.concurrent.Future
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.collection.mutable.ListBuffer
+
+import actors._
+import akka.actor.ActorSystem
+import akka.actor.Props
+import akka.pattern.ask
+import akka.util.Timeout
+import play.api.libs.json._
 
 import com.typesafe.config._
 import java.io._
@@ -21,6 +29,8 @@ object Indexer {
   val genesisBlockHash:String = config.getString("coins."+ticker+".genesisBlock").get
 
   var launched:Boolean = false
+
+  val webSocketActor = Akka.system.actorSelection("user/blockchain-explorer")
 
   var isSaving = false
   def saveState(blockHash:String) = {
@@ -138,6 +148,9 @@ object Indexer {
                                   var (message, blockNode, blockHeight, nextBlockHash) = q
                                   ApiLogs.debug(message) //Block added
                                   saveState(blockHash)
+
+                                  webSocketActor ! WebSocketActor.BroadcastToAll(Json.obj("type" -> "new-block", "hash" -> blockHash))
+
                                   Future(Right(message))
                                 }
                                 case Left(e) => {
