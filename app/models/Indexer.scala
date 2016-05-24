@@ -24,6 +24,7 @@ object Indexer {
 
   var isSaving = false
   def saveState(blockHash:String) = {
+    currentBlockHash = blockHash
     Future {
       if(isSaving == false){
         isSaving = true
@@ -185,7 +186,9 @@ object Indexer {
             rpcBlock.nextblockhash match {
               case None => {
                 ApiLogs.debug("Blocks synchronized !")
+                Neo4jBatchInserter.stopService
                 launched = false
+                startStandardMod()
               }
               case Some(b) => {
                 Neo4jEmbedded.startService
@@ -236,7 +239,6 @@ object Indexer {
                 ApiLogs.debug("Blocks synchronized !")
                 Neo4jBatchInserter.stopService
                 launched = false
-
                 startStandardMod()
               }
             }
@@ -253,6 +255,7 @@ object Indexer {
 
   private def startStandardMod() = {
     launched = true
+    Neo4jEmbedded.startService
     Neo4jBlockchainIndexer.getBlock(ticker, currentBlockHash).map { response =>
       response match {
         case Left(e) => ApiLogs.error("Neo4jBlockchainIndexer Exception : " + e.toString)
@@ -263,7 +266,7 @@ object Indexer {
               launched = false
             }
             case Some(b) => {
-              Neo4jEmbedded.startService
+              
               //Neo4jEmbedded.cleanDB(currentBlockHash)
               process(b)
             }
