@@ -11,4 +11,6 @@ trait BlockchainAPI {
 	def getBlockHash(ticker: String, blockHeight: Long): Future[JsValue]
 
     def getTransaction(ticker: String, txHash: String): Future[JsValue]
+
+    def pushTransaction(ticker: String, hex: String): Future[(Int, String)]
 }

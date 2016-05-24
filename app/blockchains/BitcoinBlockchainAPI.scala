@@ -47,14 +47,26 @@ object BitcoinBlockchainAPI extends BlockchainAPI {
   }
 
   def getTransaction(ticker: String, txHash: String): Future[JsValue] = {
-     val rpcRequest = Json.obj("jsonrpc" -> "2.0",
+    val rpcRequest = Json.obj("jsonrpc" -> "2.0",
                               "method" -> "getrawtransaction",
                               "params" -> Json.arr(txHash, 1))
 
-      val (url, user, pass) = this.connectionParameters(ticker)
+    val (url, user, pass) = this.connectionParameters(ticker)
 
-      WS.url(url).withAuth(user, pass, WSAuthScheme.BASIC).post(rpcRequest).map { response =>
-        Json.parse(response.body)
-      }
+    WS.url(url).withAuth(user, pass, WSAuthScheme.BASIC).post(rpcRequest).map { response =>
+      Json.parse(response.body)
+    }
+  }
+
+  def pushTransaction(ticker: String, hex:String): Future[(Int, String)] = {
+    val rpcRequest = Json.obj("jsonrpc" -> "2.0",
+                              "method" -> "sendrawtransaction",
+                              "params" -> Json.arr(hex))
+
+    val (url, user, pass) = this.connectionParameters(ticker)
+
+    WS.url(url).withAuth(user, pass, WSAuthScheme.BASIC).post(rpcRequest).map { response =>
+      (response.status, response.body)
+    }
   }
 }

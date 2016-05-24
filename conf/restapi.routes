@@ -1,5 +1,5 @@
 
-POST     /v1/:coin/transactions/send                              controllers.RESTApi.sendTransaction(coin: String)
+POST     /v1/transactions/send                              controllers.RESTApi.sendTransaction
 
 
 
