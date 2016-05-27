@@ -18,14 +18,59 @@ import java.io._
 
 object RESTApi extends Controller {
 
-	var blockchainsList: Map[String, BlockchainAPI] = Map()
-	  blockchainsList += ("btc" -> blockchains.BitcoinBlockchainAPI)
-	  blockchainsList += ("ltc" -> blockchains.BitcoinBlockchainAPI)
-	  blockchainsList += ("doge" -> blockchains.BitcoinBlockchainAPI)
-	  blockchainsList += ("btcsegnet" -> blockchains.BitcoinBlockchainAPI)
+  var blockchainsList: Map[String, BlockchainAPI] = Map()
+      blockchainsList += ("btc" -> blockchains.BitcoinBlockchainAPI)
+      blockchainsList += ("ltc" -> blockchains.BitcoinBlockchainAPI)
+      blockchainsList += ("doge" -> blockchains.BitcoinBlockchainAPI)
+      blockchainsList += ("btcsegnet" -> blockchains.BitcoinBlockchainAPI)
 
-	var indexer: Config = ConfigFactory.parseFile(new File("indexer.conf"))
-	var ticker:String = indexer.getString("ticker")
+  var confIndexer: Config = ConfigFactory.parseFile(new File("indexer.conf"))
+  var ticker:String = confIndexer.getString("ticker")
+
+  def getCurrentBlock = Action.async {
+    Neo4jEmbedded.getCurrentBlock().map { result =>
+      result match {
+        case Right(json) => Ok(json)
+        case Left(e) => BadRequest(e.toString)
+      }
+    }
+  }
+
+  def getAddressesTransactions(addressesHashes: String, blockHash: Option[String]) = Action.async {
+    Neo4jEmbedded.getAddressesTransactions(addressesHashes, blockHash).map { result =>
+      result match {
+        case Right(json) => Ok(json)
+        case Left(e) => BadRequest(e.toString)
+      }
+    }
+  }
+
+  def getAddressesUnspents(addressesHashes: String) = Action.async {
+    Neo4jEmbedded.getAddressesUnspents(addressesHashes).map { result =>
+      result match {
+        case Right(json) => Ok(json)
+        case Left(e) => BadRequest(e.toString)
+      }
+    }
+  }
+
+  def getTransactions(txsHashes: String) = Action.async {
+    Neo4jEmbedded.getTransactions(txsHashes).map { result =>
+      result match {
+        case Right(json) => Ok(json)
+        case Left(e) => BadRequest(e.toString)
+      }
+    }
+  }
+
+  def getTransactionsHex(txsHashes: String) = Action.async {
+    Neo4jEmbedded.getTransactionsHex(txsHashes).map { result =>
+      result match {
+        case Right(json) => Ok(json)
+        case Left(e) => BadRequest(e.toString)
+      }
+    }
+  }
 
   def sendTransaction = Action.async { implicit request =>
     var txHex = ""
@@ -48,15 +93,15 @@ object RESTApi extends Controller {
         Future(BadRequest(Json.obj("error" -> msg)))
       }
       case None => {
-				blockchainsList(ticker).pushTransaction(ticker, txHex).map { res =>
-					val (status, message) = res
-					status match {
-						case 200 => Ok(message)
-						case _ => {
-							Status(status)(Json.parse(message))
-						}
-					}
-				}
+        blockchainsList(ticker).pushTransaction(ticker, txHex).map { res =>
+          val (status, message) = res
+          status match {
+            case 200 => Ok(message)
+            case _ => {
+              Status(status)(Json.parse(message))
+            }
+          }
+        }
       }
     }
   }
