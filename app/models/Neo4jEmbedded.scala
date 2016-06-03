@@ -50,12 +50,12 @@ object Neo4jEmbedded {
   var inputoutputLabel: Option[Label] = None
   var addressLabel: Option[Label] = None
 
-  var follows:RelationshipType = RelationshipType.withName( "FOLLOWS" )
+  var minedby:RelationshipType = RelationshipType.withName( "MINED_BY" )
+  var uncleof:RelationshipType = RelationshipType.withName( "UNCLE_OF" )
   var contains:RelationshipType = RelationshipType.withName( "CONTAINS" )
-  var emits:RelationshipType = RelationshipType.withName( "EMITS" )
-  var supplies:RelationshipType = RelationshipType.withName( "SUPPLIES" )
+  var follows:RelationshipType = RelationshipType.withName( "FOLLOWS" )
+  var issentfrom:RelationshipType = RelationshipType.withName( "IS_SENT_FROM" )
   var issentto:RelationshipType = RelationshipType.withName( "IS_SENT_TO" )
-
 
 
   var isShutdowning:Boolean = false
@@ -229,41 +229,6 @@ object Neo4jEmbedded {
     }
   }
 
-  
-  private def getInputOutputNode(txHash: String, outputIndex:Long, createOutputTx:Boolean = true):Node = {
-    val graphDb = db.get
-    
-    var optNode:Option[Node] = None
-
-    // Find Node:
-    val result:org.neo4j.graphdb.Result = graphDb.execute("MATCH (io:InputOutput {output_index: "+outputIndex+"})<-[:EMITS]-(tx:Transaction {hash: '"+txHash+"'}) RETURN io")
-    val nodes:ResourceIterator[Node] = result.columnAs( "io" )
-    if ( nodes.hasNext() ){
-          optNode = Some(nodes.next())
-      }
-    
-    optNode match {
-      case Some(node) => node
-      case None => {
-        // If doesn't exist, create :
-
-        val inputoutputNode:Node = graphDb.createNode( inputoutputLabel.get )
-        inputoutputNode.setProperty( "output_index", outputIndex )
-
-        createOutputTx match {
-          case true => {
-            val txNode:Node = graphDb.createNode( transactionLabel.get )
-            txNode.setProperty( "hash", txHash )
-            txNode.createRelationshipTo( inputoutputNode , emits )
-          }
-          case false => /* nothing */
-        }         
-
-        inputoutputNode
-      }
-    }
-  }
-
   private def getAddressNode(address: String):Node = {
     val graphDb = db.get
 
@@ -288,7 +253,7 @@ object Neo4jEmbedded {
     }
   }
 
-  def insert(rpcBlock:RPCBlock, transactions:ListBuffer[RPCTransaction]):Future[Either[Exception,(String, Long)]] = {
+  def insert(rpcBlock:RPCBlock, blockReward: BigDecimal, uncles:ListBuffer[(RPCBlock, Integer, BigDecimal)] = ListBuffer()):Future[Either[Exception,(String, Long)]] = {
     Future {
 
       val graphDb = db.get
@@ -303,89 +268,73 @@ object Neo4jEmbedded {
         // Block
         val blockNode:Node = graphDb.createNode( blockLabel.get )
         blockNode.setProperty( "hash", rpcBlock.hash )
-        blockNode.setProperty( "height", rpcBlock.height )
-        blockNode.setProperty( "time", rpcBlock.time )
+        blockNode.setProperty( "height", Converter.hexToInt(rpcBlock.number) )
+        blockNode.setProperty( "time", Converter.hexToInt(rpcBlock.timestamp) )
+        blockNode.setProperty( "reward", blockReward.bigDecimal.toPlainString )
         blockNode.setProperty( "main_chain", true )
 
         // Parent Block relationship
-        rpcBlock.previousblockhash match {
-        case None => /* nothing */
-        case Some(prevBlock) => {
-          val prevBlockNode:Node = graphDb.findNode( blockLabel.get, "hash", prevBlock )
-          blockNode.createRelationshipTo( prevBlockNode, follows )
+        rpcBlock.parentHash match {
+          case None => /* nothing */
+          case Some(prevBlock) => {
+            val prevBlockNode:Node = graphDb.findNode( blockLabel.get, "hash", prevBlock )
+            blockNode.createRelationshipTo( prevBlockNode, follows )
+          }
         }
+
+        // Block miner
+        var addressNode:Node = getAddressNode(rpcBlock.miner)
+        blockNode.createRelationshipTo( addressNode, minedby)
+
+        // Uncles
+        for(uncle <- uncles){
+          val (u, u_index, u_reward) = uncle
+
+          val uncleNode:Node = graphDb.createNode( blockLabel.get )
+          uncleNode.setProperty( "hash", u.hash )
+          uncleNode.setProperty( "height", Converter.hexToInt(u.number) )
+          uncleNode.setProperty( "time", Converter.hexToInt(u.timestamp) )
+          uncleNode.setProperty( "uncle_index", u_index )
+          uncleNode.setProperty( "reward", u_reward.bigDecimal.toPlainString )
+          uncleNode.setProperty( "main_chain", true )
+          uncleNode.createRelationshipTo( blockNode, uncleof)
+
+          var addressNode:Node = getAddressNode(u.miner)
+          uncleNode.createRelationshipTo( addressNode, minedby)
+          
         }
+        
 
         // Transactions
-        for(rpcTransaction <- transactions){
+        for(rpcTransaction <- rpcBlock.transactions.get){
 
-          var txNode:Node = getTransactionNode(rpcTransaction.txid)
-
-          txNode.setProperty( "hash", rpcTransaction.txid )
-          txNode.setProperty( "received_at", rpcBlock.time )
-          txNode.setProperty( "lock_time", rpcTransaction.locktime )
-          txNode.setProperty( "hex", rpcTransaction.hex )
+          var txNode:Node = graphDb.createNode( transactionLabel.get )
+          txNode.setProperty( "hash", rpcTransaction.hash )
+          txNode.setProperty( "index", Converter.hexToInt(rpcTransaction.transactionIndex) )
+          txNode.setProperty( "nonce", rpcTransaction.nonce )
+          txNode.setProperty( "value", Converter.hexToBigDecimal(rpcTransaction.value).bigDecimal.toPlainString )
+          txNode.setProperty( "gas", Converter.hexToBigDecimal(rpcTransaction.gas).bigDecimal.toPlainString )
+          txNode.setProperty( "gas_price", Converter.hexToBigDecimal(rpcTransaction.gasPrice).bigDecimal.toPlainString )
+          txNode.setProperty( "received_at", Converter.hexToInt(rpcBlock.timestamp) )
+          txNode.setProperty( "input", rpcTransaction.input )
 
           blockNode.createRelationshipTo( txNode, contains )
 
-          // Inputs
-          for((rpcInput, index) <- rpcTransaction.vin.zipWithIndex){
+          var fromNode:Node = getAddressNode(rpcTransaction.from)
+          txNode.createRelationshipTo( fromNode, issentfrom)
 
-            val inputNode:Node = rpcInput.coinbase match {
-              case Some(coinbase) => {
-                graphDb.createNode( inputoutputLabel.get )
-              }
-              case None => {
-                getInputOutputNode(rpcInput.txid.get, rpcInput.vout.get)
-              }
+          rpcTransaction.to match {
+            case Some(to) => {
+              var toNode:Node = getAddressNode(to)
+              txNode.createRelationshipTo( toNode, issentto)
             }
-
-            inputNode.setProperty( "input_index", index )
-            inputNode.setProperty( "sequence", rpcInput.sequence )
-
-            rpcInput.txinwitness match {
-              case None => /* nothing */
-              case Some(witness) => {
-                inputNode.setProperty( "txinwitness", witness.toArray )
-              }
-            }
-
-            rpcInput.coinbase match {
-              case Some(coinbase) => {
-                inputNode.setProperty( "coinbase", coinbase )
-              }
-              case None => {
-                inputNode.setProperty( "script_signature", rpcInput.scriptSig.get.hex )
-              }
-            }
-
-            inputNode.createRelationshipTo( txNode, supplies )
-          }
-
-          // Outputs
-          for(rpcOutput <- rpcTransaction.vout){
-            val outputNode:Node = getInputOutputNode(rpcTransaction.txid, rpcOutput.n, false)
-            outputNode.setProperty( "value", Converter.btcToSatoshi(rpcOutput.value) )
-            outputNode.setProperty( "script_hex", rpcOutput.scriptPubKey.hex )
-
-            txNode.createRelationshipTo( outputNode, emits )
-
-            // Addresses
-            rpcOutput.scriptPubKey.addresses match {
-              case None => /* nothing */
-              case Some(addresses) => {
-                for(address <- addresses){
-                  var addressNode:Node = getAddressNode(address)
-                  outputNode.createRelationshipTo( addressNode, issentto )
-                }
-              }
-            }
+            case None => /* nothing */
           }
         }
 
         tx.success()
 
-        Right("Block '"+rpcBlock.hash+"' (n°"+rpcBlock.height.toString+") added !", 0)
+        Right("Block '"+rpcBlock.hash+"' (n°"+ Converter.hexToInt(rpcBlock.number).toString +") added !", 0)
 
       } catch {
         case e:Exception => {
@@ -397,8 +346,6 @@ object Neo4jEmbedded {
       }
     }
   }
-
-
 
   def getCurrentBlock():Future[Either[Exception, JsValue]] = {
     Future {
@@ -412,25 +359,71 @@ object Neo4jEmbedded {
           RETURN b ORDER BY b.height DESC LIMIT 1
         """
 
-        var result:ListBuffer[JsValue] = ListBuffer()
-
         val dbRes:org.neo4j.graphdb.Result = graphDb.execute(query)
         val nodes:ResourceIterator[Node] = dbRes.columnAs( "b" )
         if(nodes.hasNext()){
           //Block
           val blockNode:Node = nodes.next()
 
-          //Result
-          val result = Json.obj( 
-            "hash" -> blockNode.getProperty("hash").toString,
-            "height" -> blockNode.getProperty("height").toString.toLong,
-            "time" -> blockNode.getProperty("time").toString.toLong
-          )
 
-          Right(result)
+          getBlock(blockNode) match {
+            case Right(json) => {
+              Right(json)
+            }
+            case Left(e) => {
+              Left(new Exception("TODO"))
+            }
+          }
+          
         }else{
           Left(new Exception("TODO"))
         }
+      } catch {
+        case e:Exception => {
+          Left(e)
+        }
+      }finally {
+        tx.close()
+      }
+    }
+  }
+
+  def getBlocks(blockHashesRaw:String):Future[Either[Exception, JsValue]] = {
+    Future {
+      val graphDb = db.get
+      var tx:Transaction = graphDb.beginTx()
+      try { 
+
+        val blockHashes: Array[String] = blockHashesRaw.split(",")
+
+        val query = """
+          MATCH (b:Block)
+          WHERE b.hash IN { blockHashes }
+          RETURN b
+        """
+
+        var parameters:java.util.Map[String,Object] = new java.util.HashMap()
+        parameters.put( "blockHashes",  blockHashes)
+
+        var result:ListBuffer[JsValue] = ListBuffer()
+
+        val dbRes:org.neo4j.graphdb.Result = graphDb.execute(query, parameters)
+        val nodes:ResourceIterator[Node] = dbRes.columnAs( "b" )
+        while(nodes.hasNext()){
+          //Block
+          val blockNode:Node = nodes.next()
+
+          getBlock(blockNode) match {
+            case Right(json) => {
+              result += json
+            }
+            case Left(e) => {
+              //TODO
+            }
+          }
+        }
+
+        Right(Json.toJson(result))
       } catch {
         case e:Exception => {
           Left(e)
@@ -459,63 +452,6 @@ object Neo4jEmbedded {
         case Left(e) => Future(Left(e))
       }
 
-    }
-  }
-
-  def getAddressesUnspents(addressesRaw:String):Future[Either[Exception, JsValue]] = {
-    Future {
-      val graphDb = db.get
-      var tx:Transaction = graphDb.beginTx()
-      try { 
-
-        val addresses: Array[String] = addressesRaw.split(",")
-
-        val query = """
-          MATCH (tx:Transaction)-[:EMITS]->(o:InputOutput)-[:IS_SENT_TO]->(a:Address)
-          WHERE a.value IN { addresses } AND NOT EXISTS(o.input_index)
-          RETURN o
-        """
-
-        var parameters:java.util.Map[String,Object] = new java.util.HashMap()
-        parameters.put( "addresses", addresses.asInstanceOf[AnyRef] )
-
-        var result:ListBuffer[JsValue] = ListBuffer()
-
-        val dbRes:org.neo4j.graphdb.Result = graphDb.execute(query, parameters)
-        val nodes:ResourceIterator[Node] = dbRes.columnAs( "o" )
-        while(nodes.hasNext()){
-          //Output
-          val outputNode:Node = nodes.next()
-
-          //Transaction
-          val txNode:Node = outputNode.getSingleRelationship( emits , Direction.INCOMING ).getStartNode()
-
-          //Addresses
-          var addresses:ListBuffer[String] = ListBuffer()
-          for (relationship <- outputNode.getRelationships(issentto, Direction.OUTGOING)){
-            //Address
-            val addressNode:Node = relationship.getEndNode()
-            addresses += addressNode.getProperty("value").toString
-          }
-
-          //Result
-          result += Json.obj( 
-            "transaction_hash" -> txNode.getProperty("hash").toString,
-            "output_index" -> outputNode.getProperty("output_index").toString.toLong,
-            "value" -> outputNode.getProperty("value").toString.toLong,
-            "addresses" -> addresses
-          )
-        }
-
-        Right(Json.toJson(result))
-
-      } catch {
-        case e:Exception => {
-          Left(e)
-        }
-      }finally {
-        tx.close()
-      }
     }
   }
 
@@ -566,50 +502,6 @@ object Neo4jEmbedded {
     }
   }
 
-  def getTransactionsHex(txsHashesRaw:String):Future[Either[Exception, JsValue]] = {
-    Future {
-      val graphDb = db.get
-      var tx:Transaction = graphDb.beginTx()
-      try { 
-
-        val txsHashes: Array[String] = txsHashesRaw.split(",")
-
-        val query = """
-          MATCH (tx:Transaction)
-          WHERE tx.hash IN { txsHashes }
-          RETURN DISTINCT tx
-        """
-
-        var parameters:java.util.Map[String,Object] = new java.util.HashMap()
-        parameters.put( "txsHashes",  txsHashes)
-
-        var result:ListBuffer[JsValue] = ListBuffer()
-
-        val dbRes:org.neo4j.graphdb.Result = graphDb.execute(query, parameters)
-        val nodes:ResourceIterator[Node] = dbRes.columnAs( "tx" )
-        while(nodes.hasNext()){
-          //Transaction
-          val txNode:Node = nodes.next()
-
-          //Result
-          result += Json.obj( 
-            "transaction_hash" -> txNode.getProperty("hash").toString,
-            "hex" -> txNode.getProperty("hex").toString
-          )
-        }
-
-        Right(Json.toJson(result))
-
-      } catch {
-        case e:Exception => {
-          Left(e)
-        }
-      }finally {
-        tx.close()
-      }
-    }
-  }
-
 
   private def getBlockHeight(hash:String):Future[Either[Exception, Long]] = {
     Future {
@@ -629,88 +521,54 @@ object Neo4jEmbedded {
     }
   }
 
+  private def getBlock(blockNode:Node):Either[Exception, JsValue] = {
+    //Result
+    val result = Json.obj( 
+      "hash" -> blockNode.getProperty("hash").toString,
+      "height" -> blockNode.getProperty("height").toString.toLong,
+      "time" -> blockNode.getProperty("time").toString.toLong
+    )
+
+    Right(result)
+  }
+
   private def getTransaction(txNode:Node):Either[Exception, JsValue] = {
 
     //Block
     val blockNode:Node = txNode.getSingleRelationship( contains , Direction.INCOMING ).getStartNode()
 
-    //Inputs
-    var inputs:Map[Long, JsValue] = Map()
-    for (relationship <- txNode.getRelationships(supplies, Direction.INCOMING)){
-      //Input
-      val inputNode:Node = relationship.getStartNode()
-      val inputIndex:Long = inputNode.getProperty("input_index").toString.toLong
+    //From
+    val fromNode:Node = txNode.getSingleRelationship( issentfrom , Direction.OUTGOING ).getEndNode()
 
-      //Addresses
-      var addresses:ListBuffer[String] = ListBuffer()
-      for (relationship <- inputNode.getRelationships(issentto, Direction.OUTGOING)){
-        //Address
-        val addressNode:Node = relationship.getEndNode()
-        addresses += addressNode.getProperty("value").toString
+    //To
+    var toValue = txNode.getSingleRelationship( issentto , Direction.OUTGOING ) match {
+      case r:Relationship => {
+        val toNode:Node = r.getEndNode()
+        toNode.getProperty("value").toString
       }
-
-      inputNode.hasProperty("coinbase") match {
-        case true => {
-          inputs(inputIndex) = Json.obj(
-            "input_index" -> inputIndex,
-            "coinbase" -> inputNode.getProperty("coinbase").toString,
-            "sequence" -> inputNode.getProperty("sequence").toString.toLong
-          )
-        }
-        case false => {
-          inputs(inputIndex) = Json.obj(
-            "input_index" -> inputIndex,
-            "output_index" -> inputNode.getProperty("output_index").toString.toLong,
-            "value" -> inputNode.getProperty("value").toString.toLong,
-            "addresses" -> addresses,
-            "script_hex" -> inputNode.getProperty("script_hex").toString,
-            "sequence" -> inputNode.getProperty("sequence").toString.toLong
-          )
-        }
-      }
+      case null => null
     }
-
-    //Outputs
-    var outputs:Map[Long, JsValue] = Map()
-    for (relationship <- txNode.getRelationships(emits, Direction.OUTGOING)){
-      //Output
-      val outputNode:Node = relationship.getEndNode()
-      val outputIndex:Long = outputNode.getProperty("output_index").toString.toLong
-
-      //Addresses
-      var addresses:ListBuffer[String] = ListBuffer()
-      for (relationship <- outputNode.getRelationships(issentto, Direction.OUTGOING)){
-        //Address
-        val addressNode:Node = relationship.getEndNode()
-        addresses += addressNode.getProperty("value").toString
-      }
-
-      outputs(outputIndex) = Json.obj(
-        "output_index" -> outputIndex,
-        "value" -> outputNode.getProperty("value").toString.toLong,
-        "addresses" -> addresses,
-        "script_hex" -> outputNode.getProperty("script_hex").toString
-      )
-    }
-
-    val inputsList = ListMap(inputs.toSeq.sortBy(_._1):_*).values.toList
-    val outputsList = ListMap(outputs.toSeq.sortBy(_._1):_*).values.toList
 
     //Result
     val result = Json.obj( 
       "hash" -> txNode.getProperty("hash").toString,
       "received_at" -> txNode.getProperty("received_at").toString.toLong,
-      "lock_time" -> txNode.getProperty("lock_time").toString.toLong,
+      "nonce" -> txNode.getProperty("nonce").toString,
+      "value" -> txNode.getProperty("value").toString.toLong,
+      "gas" -> txNode.getProperty("gas").toString.toLong,
+      "gas_price" -> txNode.getProperty("gas_price").toString.toLong,
+      "from" -> fromNode.getProperty("value").toString,
+      "to" -> toValue,
+      "input" -> txNode.getProperty("input").toString,
+      "index" -> txNode.getProperty("index").toString.toLong,
       "block" -> Json.obj(
         "hash" -> blockNode.getProperty("hash").toString,
         "height" -> blockNode.getProperty("height").toString.toLong,
         "time" -> blockNode.getProperty("time").toString.toLong
-      ),
-      "inputs" -> inputsList,
-      "outputs" -> outputsList
+      )
     )
 
-    Right(Json.toJson(result))
+    Right(result)
   }
 
   private def getAddressesTxs(addressesRaw:String, blockHeight: Long):Future[Either[Exception, JsValue]] = {
@@ -722,7 +580,7 @@ object Neo4jEmbedded {
         val addresses: Array[String] = addressesRaw.split(",")
 
         val query = """
-          MATCH (a:Address)<-[:IS_SENT_TO]-(io:InputOutput)--(tx:Transaction)<-[:CONTAINS]-(b:Block)
+          MATCH (a:Address)<-[]-(tx:Transaction)<-[:CONTAINS]-(b:Block)
           WHERE a.value IN { addresses } AND b.height > { blockHeight }
           WITH tx, b ORDER BY b.height ASC LIMIT 50 
           RETURN DISTINCT tx
@@ -760,7 +618,5 @@ object Neo4jEmbedded {
       }
     }
   }
-
-
 
 }

@@ -19,14 +19,12 @@ import java.io._
 object RESTApi extends Controller {
 
   var blockchainsList: Map[String, BlockchainAPI] = Map()
-      blockchainsList += ("btc" -> blockchains.BitcoinBlockchainAPI)
-      blockchainsList += ("ltc" -> blockchains.BitcoinBlockchainAPI)
-      blockchainsList += ("doge" -> blockchains.BitcoinBlockchainAPI)
-      blockchainsList += ("btcsegnet" -> blockchains.BitcoinBlockchainAPI)
+      blockchainsList += ("eth" -> blockchains.EthereumBlockchainAPI)
 
   var confIndexer: Config = ConfigFactory.parseFile(new File("indexer.conf"))
   var ticker:String = confIndexer.getString("ticker")
 
+  
   def getCurrentBlock = Action.async {
     Neo4jEmbedded.getCurrentBlock().map { result =>
       result match {
@@ -45,26 +43,8 @@ object RESTApi extends Controller {
     }
   }
 
-  def getAddressesUnspents(addressesHashes: String) = Action.async {
-    Neo4jEmbedded.getAddressesUnspents(addressesHashes).map { result =>
-      result match {
-        case Right(json) => Ok(json)
-        case Left(e) => BadRequest(e.toString)
-      }
-    }
-  }
-
   def getTransactions(txsHashes: String) = Action.async {
     Neo4jEmbedded.getTransactions(txsHashes).map { result =>
-      result match {
-        case Right(json) => Ok(json)
-        case Left(e) => BadRequest(e.toString)
-      }
-    }
-  }
-
-  def getTransactionsHex(txsHashes: String) = Action.async {
-    Neo4jEmbedded.getTransactionsHex(txsHashes).map { result =>
       result match {
         case Right(json) => Ok(json)
         case Left(e) => BadRequest(e.toString)

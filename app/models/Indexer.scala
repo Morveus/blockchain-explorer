@@ -16,6 +16,8 @@ import play.api.libs.json._
 import com.typesafe.config._
 import java.io._
 
+import utils._
+
 object Indexer {
   val config = play.api.Play.configuration
 
@@ -23,7 +25,8 @@ object Indexer {
 
   var batchmod:Boolean = indexer.getBoolean("batchmod")
   var ticker:String = indexer.getString("ticker")
-  //var currentBlockHeight:Long = indexer.getLong("currentblock")
+  var currentBlockHeight:Long = 0
+  var latestBlockHeight:Long = 0
   var currentBlockHash:String = indexer.getString("currentblock")
 
   val genesisBlockHash:String = config.getString("coins."+ticker+".genesisBlock").get
@@ -60,7 +63,7 @@ object Indexer {
       case false => startStandardMod()
     }
   }
-
+  
   def newblock(blockHash:String) = {
      //Si l'indexation des précédents blocks est terminée:
     if(launched == false){
@@ -84,9 +87,10 @@ object Indexer {
                   if(resultsFuts.size > 0) {
                     val futuresResponses: Future[ListBuffer[Unit]] = Future.sequence(resultsFuts)
                     futuresResponses.map { result =>
-                      
+                      pushNotification("new-reorg")
                     }
                   }else{
+                    pushNotification("new-reorg")
                     Future(Unit)
                   }
                 }
@@ -137,24 +141,25 @@ object Indexer {
                       Future(Left(e))
                     }
                     case Right(rpcBlock) => {
-                      rpcBlock.previousblockhash match {
+                      val blockHeight = Converter.hexToInt(rpcBlock.number)
+                      rpcBlock.parentHash match {
                         case Some(prevB) => {
                           process(prevB).flatMap { result =>
-                            
+
                             // Ajout du block:
-                            Neo4jBlockchainIndexer.processBlock("standard", ticker, blockHash).flatMap { response =>
+                            Neo4jBlockchainIndexer.processBlock("standard", ticker, blockHeight).flatMap { response =>
                               response match {
                                 case Right(q) => {
-                                  var (message, blockNode, blockHeight, nextBlockHash) = q
+                                  var (message, blockNode, blockHash) = q
                                   ApiLogs.debug(message) //Block added
                                   saveState(blockHash)
 
-                                  webSocketActor ! WebSocketActor.BroadcastToAll(Json.obj("type" -> "new-block", "hash" -> blockHash))
-
-                                  Future(Right(message))
+                                  pushNotification("new-block", blockHash).map { result =>
+                                    Right(message)
+                                  }
                                 }
                                 case Left(e) => {
-                                  ApiLogs.error("Indexer.process('"+blockHash+"') Exception : " + e.toString)
+                                  ApiLogs.error("Indexer.process('"+blockHeight+"') Exception : " + e.toString)
                                   Future(Left(e))
                                 }
                               }
@@ -182,8 +187,59 @@ object Indexer {
       }
 
     }
+  }
 
+  private def pushNotification(datatype:String, hash:String = "") = {
+    datatype match {
+      case "new-block" => {
+        Neo4jEmbedded.getBlocks(hash).map { result =>
+          result match {
+            case Right(json) => {
+              var message = Json.obj("payload" -> Json.obj(
+                  "type" -> datatype,
+                  "block_chain" -> ticker,
+                  "block" -> json(0)))
+              webSocketActor ! WebSocketActor.BroadcastToAll(message)
+            }
+            case Left(e) => ApiLogs.error("Indexer.pushNotification(Block '"+hash+"') Exception : " + e.toString)
+          }
+        }
+      }
+      case "new-transaction" => {
+        Neo4jEmbedded.getTransactions(hash).map { result =>
+          result match {
+            case Right(json) => {
+              var message = Json.obj("payload" -> Json.obj(
+                  "type" -> datatype,
+                  "block_chain" -> ticker,
+                  "transaction" -> json(0)))
+              webSocketActor ! WebSocketActor.BroadcastToAll(message)
+            }
+            case Left(e) => ApiLogs.error("Indexer.pushNotification(Transaction '"+hash+"') Exception : " + e.toString)
+          }
+        }
+      }
+      case "new-reorg" => {
+        Future {
+          var message = Json.obj("payload" -> Json.obj(
+            "type" -> "new-reorg"))
+          webSocketActor ! WebSocketActor.BroadcastToAll(message)
+        }
+      }
+    }
+  }
 
+                                    
+
+  private def updateLatestBlockHeight() = {
+    Neo4jBlockchainIndexer.getLatestBlock(ticker).map { response =>
+      response match {
+        case Left(e) => ApiLogs.error("Neo4jBlockchainIndexer Exception : " + e.toString)
+        case Right(rpcBlock) => {
+          latestBlockHeight = Converter.hexToInt(rpcBlock.number)
+        }
+      }
+    }
   }
 
   private def startBatchMod() = {
@@ -196,34 +252,28 @@ object Indexer {
         response match {
          case Left(e) => ApiLogs.error("Neo4jBlockchainIndexer Exception : " + e.toString)
           case Right(rpcBlock) => {
-            rpcBlock.nextblockhash match {
-              case None => {
-                ApiLogs.debug("Blocks synchronized !")
-                Neo4jBatchInserter.stopService
-                launched = false
-                startStandardMod()
-              }
-              case Some(b) => {
-                Neo4jEmbedded.startService
-                Neo4jEmbedded.getBlockNode(currentBlockHash).map { result =>
-                  Neo4jEmbedded.stopService
-                  result match {
-                    case Right(optNode) => {
-                      optNode match {
-                        case Some(nodeId) => {
-                          Neo4jBatchInserter.startService(ticker)
-                          process(b, Some(nodeId))
-                        }
-                        case None => ApiLogs.error("Indexer Exception : previous node not found !")
-                      }
+
+            currentBlockHeight = Converter.hexToInt(rpcBlock.number)
+
+            Neo4jEmbedded.startService
+            Neo4jEmbedded.getBlockNode(currentBlockHash).map { result =>
+              Neo4jEmbedded.stopService
+              result match {
+                case Right(optNode) => {
+                  optNode match {
+                    case Some(nodeId) => {
+                      Neo4jBatchInserter.startService(ticker)
+                      process(currentBlockHeight + 1, Some(nodeId))
                     }
-                    case Left(e) => {
-                      ApiLogs.error("Indexer Exception : "+e.toString)
-                    }
+                    case None => ApiLogs.error("Indexer Exception : previous node not found !")
                   }
+                }
+                case Left(e) => {
+                  ApiLogs.error("Indexer Exception : "+e.toString)
                 }
               }
             }
+
           }
         }
       }			
@@ -232,29 +282,30 @@ object Indexer {
       Neo4jBatchInserter.startService(ticker)
       Neo4jBatchInserter.init
       Neo4jBatchInserter.cleanRedis
-      process(currentBlockHash)
+      process(currentBlockHeight)
     }
 
-    def process(blockHash:String, prevBlockNode:Option[Long] = None) {
-      Neo4jBlockchainIndexer.processBlock("batch", ticker, blockHash, prevBlockNode).map { response =>
+    def process(blockHeight:Long, prevBlockNode:Option[Long] = None) {
+      Neo4jBlockchainIndexer.processBlock("batch", ticker, blockHeight, prevBlockNode).map { response =>
         response match {
           case Right(q) => {
-            var (message, blockNode, blockHeight, nextBlockHash) = q
+            var (message, blockNode, blockHash) = q
             ApiLogs.debug(message) //Block added
 
             saveState(blockHash)
 
-            nextBlockHash match {
-              case Some(next) => {
-                process(next, Some(blockNode))	                
-              }
-              case None => {
-                ApiLogs.debug("Blocks synchronized !")
-                Neo4jBatchInserter.stopService
-                launched = false
-                startStandardMod()
+            nextBlock(blockHeight).map { response =>
+              response match {
+                case true =>  process(blockHeight + 1, Some(blockNode))
+                case false => {
+                  ApiLogs.debug("Blocks synchronized !")
+                  Neo4jBatchInserter.stopService
+                  launched = false
+                  startStandardMod()
+                }
               }
             }
+            
           }
           case Left(e) => {
             ApiLogs.error("Neo4jBlockchainIndexer Exception : " + e.toString)
@@ -262,6 +313,20 @@ object Indexer {
           }
         }
       }		
+    }
+  }
+
+  private def nextBlock(currentBlockHeight:Long):Future[Boolean] = {
+    if(latestBlockHeight > currentBlockHeight + 1){
+      Future(true)
+    }else{
+      updateLatestBlockHeight().map { response =>
+        if(latestBlockHeight > currentBlockHeight + 1){
+          true
+        }else{
+          false
+        }
+      }
     }
   }
 
@@ -273,39 +338,42 @@ object Indexer {
       response match {
         case Left(e) => ApiLogs.error("Neo4jBlockchainIndexer Exception : " + e.toString)
         case Right(rpcBlock) => {
-          rpcBlock.nextblockhash match {
-            case None => {
-              ApiLogs.debug("Blocks synchronized !")
-              launched = false
-            }
-            case Some(b) => {
-              
-              //Neo4jEmbedded.cleanDB(currentBlockHash)
-              process(b)
-            }
-          }
-        }
-      }
-    }
 
-    def process(blockHash:String) {
-      Neo4jBlockchainIndexer.processBlock("standard", ticker, blockHash).map { response =>
-        response match {
-          case Right(q) => {
-            var (message, blockNode, blockHeight, nextBlockHash) = q
-            ApiLogs.debug(message) //Block added
+          currentBlockHeight = Converter.hexToInt(rpcBlock.number)
 
-            saveState(blockHash)
-
-            nextBlockHash match {
-              case Some(next) => {
-                process(next)	                
-              }
-              case None => {
+          nextBlock(currentBlockHeight).map { response =>
+            response match {
+              case true =>  process(currentBlockHeight + 1)
+              case false => {
                 ApiLogs.debug("Blocks synchronized !")
                 launched = false
               }
             }
+          }
+
+        }
+      }
+    }
+
+    def process(blockHeight:Long) {
+      Neo4jBlockchainIndexer.processBlock("standard", ticker, blockHeight).map { response =>
+        response match {
+          case Right(q) => {
+            var (message, blockNode, blockHash) = q
+            ApiLogs.debug(message) //Block added
+
+            saveState(blockHash)
+
+            nextBlock(blockHeight).map { response =>
+              response match {
+                case true =>  process(blockHeight + 1)
+                case false => {
+                  ApiLogs.debug("Blocks synchronized !")
+                  launched = false
+                }
+              }
+            }
+
           }
           case Left(e) => {
             ApiLogs.error("Neo4jBlockchainIndexer Exception : " + e.toString)

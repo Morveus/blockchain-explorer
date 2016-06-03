@@ -46,13 +46,13 @@ object Neo4jBatchInserter {
 	var batchInserter:Option[BatchInserter] = None
 	var blockLabel: Option[Label] = None
 	var transactionLabel: Option[Label] = None
-	var inputoutputLabel: Option[Label] = None
 	var addressLabel: Option[Label] = None
 
-	var follows:RelationshipType = RelationshipType.withName( "FOLLOWS" )
+	var minedby:RelationshipType = RelationshipType.withName( "MINED_BY" )
+	var uncleof:RelationshipType = RelationshipType.withName( "UNCLE_OF" )
 	var contains:RelationshipType = RelationshipType.withName( "CONTAINS" )
-	var emits:RelationshipType = RelationshipType.withName( "EMITS" )
-	var supplies:RelationshipType = RelationshipType.withName( "SUPPLIES" )
+	var follows:RelationshipType = RelationshipType.withName( "FOLLOWS" )
+	var issentfrom:RelationshipType = RelationshipType.withName( "IS_SENT_FROM" )
 	var issentto:RelationshipType = RelationshipType.withName( "IS_SENT_TO" )
 
 	var isShutdowning:Boolean = false
@@ -69,7 +69,6 @@ object Neo4jBatchInserter {
 
 		blockLabel = Some(Label.label( "Block" ))
 		transactionLabel = Some(Label.label( "Transaction" ))
-		inputoutputLabel = Some(Label.label( "InputOutput" ))
 		addressLabel = Some(Label.label( "Address" ))
 
 		ApiLogs.debug("Neo4jBatchInserter started")
@@ -118,7 +117,7 @@ object Neo4jBatchInserter {
 		Redis.dels(jedis.get, "blockchain-explorer:"+ticker+":inputoutput:*")
 	}
 
-
+	/*
 	private def getInputOutputNode(txHash: String, outputIndex:Long, data:java.util.Map[String,Object] = Map[String, Object]()):Long = {
 		Redis.get(jedis.get, "blockchain-explorer:"+ticker+":inputoutput:"+txHash+":"+outputIndex) match {
 			case Some(inputoutputNodeS) => {
@@ -141,7 +140,8 @@ object Neo4jBatchInserter {
 			}
 		}
 	}
-
+	*/
+	
 	private def getAddressNode(address: String):Long = {
 		Redis.get(jedis.get, "blockchain-explorer:"+ticker+":address:"+address) match {
 			case Some(addressNode) => addressNode.toLong
@@ -156,7 +156,7 @@ object Neo4jBatchInserter {
 	}
 
 
-	def batchInsert(rpcBlock:RPCBlock, prevBlockNode:Option[Long], transactions:ListBuffer[RPCTransaction]):Future[Either[Exception,(String, Long)]] = {
+	def batchInsert(rpcBlock:RPCBlock, prevBlockNode:Option[Long], blockReward:BigDecimal, uncles:ListBuffer[(RPCBlock, Integer, BigDecimal)] = ListBuffer()):Future[Either[Exception,(String, Long)]] = {
 		Future {
 			try {
 				if(isShutdowning){
@@ -165,9 +165,10 @@ object Neo4jBatchInserter {
 
 				// Block
 				var properties:java.util.Map[String,Object] = new java.util.HashMap()
-					properties.put( "hash", rpcBlock.hash.asInstanceOf[AnyRef] )
-					properties.put( "height", rpcBlock.height.asInstanceOf[AnyRef] )
-					properties.put( "time", rpcBlock.time.asInstanceOf[AnyRef] )
+					properties.put( "hash", rpcBlock.hash )
+					properties.put( "height", Converter.hexToInt(rpcBlock.number).asInstanceOf[AnyRef] )
+					properties.put( "time", Converter.hexToInt(rpcBlock.timestamp).asInstanceOf[AnyRef] )
+					properties.put( "reward", blockReward.bigDecimal.toPlainString )
 					properties.put( "main_chain", true.asInstanceOf[AnyRef] )
 
 				val blockNode:Long = batchInserter.get.createNode( properties, blockLabel.get )
@@ -180,68 +181,54 @@ object Neo4jBatchInserter {
 					case None => /* nothing (genesis block) */
 				}
 
-				// Transactions
-				for(rpcTransaction <- transactions){
+				// Block miner
+				var addressNode:Long = getAddressNode(rpcBlock.miner)
+				batchInserter.get.createRelationship( blockNode, addressNode, minedby, null )
+
+				// Uncles
+				for(uncle <- uncles){
+					val (u, u_index, u_reward) = uncle
 					properties = new java.util.HashMap()
-						properties.put( "hash", rpcTransaction.txid.asInstanceOf[AnyRef] )
-						properties.put( "received_at", rpcBlock.time.asInstanceOf[AnyRef] )
-						properties.put( "lock_time", rpcTransaction.locktime.asInstanceOf[AnyRef] )
-						properties.put( "hex", rpcTransaction.hex.asInstanceOf[AnyRef] )
-					val txNode:Long = batchInserter.get.createNode( properties, transactionLabel.get )
-					batchInserter.get.createRelationship( blockNode, txNode, contains, null )
-
-					// Inputs
-					for((rpcInput, index) <- rpcTransaction.vin.zipWithIndex){
-						properties = new java.util.HashMap()
-							properties.put( "input_index", index.asInstanceOf[AnyRef] )
-							properties.put( "sequence", rpcInput.sequence.asInstanceOf[AnyRef] )
-
-
-						rpcInput.txinwitness match {
-							case None => /* nothing */
-							case Some(witness) => {
-								properties.put( "txinwitness", witness.toArray.asInstanceOf[AnyRef] )
-							}
-						}
-
-						rpcInput.coinbase match {
-							case Some(coinbase) => {
-									properties.put( "coinbase", coinbase.asInstanceOf[AnyRef] )
-								val inputoutputNode:Long = batchInserter.get.createNode( properties, inputoutputLabel.get )
-								batchInserter.get.createRelationship( inputoutputNode, txNode, supplies, null )
-							}
-							case None => {
-								properties.put( "script_signature", rpcInput.scriptSig.get.hex.asInstanceOf[AnyRef])
-								val inputoutputNode:Long = getInputOutputNode(rpcInput.txid.get, rpcInput.vout.get, properties)
-								batchInserter.get.createRelationship( inputoutputNode, txNode, supplies, null )
-							}
-						}
-					}
-
-					// Outputs
-					for(rpcOutput <- rpcTransaction.vout){
-						properties = new java.util.HashMap()
-							properties.put( "value", Converter.btcToSatoshi(rpcOutput.value).asInstanceOf[AnyRef] )
-							properties.put( "script_hex", rpcOutput.scriptPubKey.hex.asInstanceOf[AnyRef] )
-						val inputoutputNode:Long = getInputOutputNode(rpcTransaction.txid, rpcOutput.n, properties)
-						batchInserter.get.createRelationship( txNode, inputoutputNode, emits, null )
-
-						// Addresses
-						rpcOutput.scriptPubKey.addresses match {
-							case None => /* nothing */
-							case Some(addresses) => {
-								for(address <- addresses){
-									var addressNode:Long = getAddressNode(address)
-									batchInserter.get.createRelationship( inputoutputNode, addressNode, issentto, null )
-								}
-							}
-						}
-
-					}
-
+					properties.put( "hash", u.hash )
+					properties.put( "height", Converter.hexToInt(u.number).asInstanceOf[AnyRef] )
+					properties.put( "time", Converter.hexToInt(u.timestamp).asInstanceOf[AnyRef] )
+					properties.put( "uncle_index", u_index.asInstanceOf[AnyRef] )
+					properties.put( "reward", u_reward.bigDecimal.toPlainString )
+					properties.put( "main_chain", true.asInstanceOf[AnyRef] )
+					var uncleNode:Long = batchInserter.get.createNode( properties, blockLabel.get )
+          			batchInserter.get.createRelationship( uncleNode, blockNode, uncleof, null )
+          			var addressNode:Long = getAddressNode(u.miner)
+					batchInserter.get.createRelationship( uncleNode, addressNode, minedby, null )
 				}
 
-	      		Right("Block '"+rpcBlock.hash+"' (n°"+rpcBlock.height.toString+") added !", blockNode)
+				// Transactions
+				for(tx <- rpcBlock.transactions.get){
+					properties = new java.util.HashMap()
+					properties.put( "hash", tx.hash )
+					properties.put( "index", Converter.hexToInt(tx.transactionIndex).asInstanceOf[AnyRef] )
+					properties.put( "nonce", tx.nonce.asInstanceOf[AnyRef] )
+					properties.put( "value", Converter.hexToBigDecimal(tx.value).bigDecimal.toPlainString )
+					properties.put( "gas", Converter.hexToBigDecimal(tx.gas).bigDecimal.toPlainString )
+					properties.put( "gas_price", Converter.hexToBigDecimal(tx.gasPrice).bigDecimal.toPlainString )
+					properties.put( "received_at", Converter.hexToInt(rpcBlock.timestamp).asInstanceOf[AnyRef] )
+					properties.put( "input", tx.input.asInstanceOf[AnyRef] )
+					var txNode:Long = batchInserter.get.createNode( properties, transactionLabel.get )
+					batchInserter.get.createRelationship( blockNode, txNode, contains, null )
+					var fromNode:Long = getAddressNode(tx.from)
+					batchInserter.get.createRelationship( txNode, fromNode, issentfrom, null )
+					tx.to match {
+				    	case Some(to) => {
+				    		var toNode:Long = getAddressNode(to)
+				    		batchInserter.get.createRelationship( txNode, toNode, issentto, null )
+
+				    	}
+				    	case None => {
+				    		/* */
+				    	}
+				    }
+				}
+
+	      		Right("Block '"+rpcBlock.hash+"' (n°"+Converter.hexToInt(rpcBlock.number).toString+") added !", blockNode)
 
 			} catch {
 				case e:Exception => {

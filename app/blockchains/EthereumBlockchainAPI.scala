@@ -8,8 +8,9 @@ import play.api.libs.json._
 
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
+import scala.util.Random
 
-object BitcoinBlockchainAPI extends BlockchainAPI {
+object EthereumBlockchainAPI extends BlockchainAPI {
 
   val config = play.Play.application.configuration
 
@@ -23,9 +24,11 @@ object BitcoinBlockchainAPI extends BlockchainAPI {
   }  
 
   def getBlock(ticker: String, blockHash: String): Future[JsValue] = {
+    val rpcRequestId = Random.nextInt(10000000)
     val rpcRequest = Json.obj("jsonrpc" -> "2.0",
-                              "method" -> "getblock",
-                              "params" -> Json.arr(blockHash))
+                              "method" -> "eth_getBlockByHash",
+                              "id" -> rpcRequestId,
+                              "params" -> Json.arr(blockHash, true))
 
     val (url, user, pass) = this.connectionParameters(ticker)
 
@@ -34,10 +37,14 @@ object BitcoinBlockchainAPI extends BlockchainAPI {
     }
   }
 
-  def getBlockHash(ticker: String, blockHeight: Long): Future[JsValue] = {
+  def getBlockByHeight(ticker: String, blockHeight: Long): Future[JsValue] = {
+    val height = Integer.toHexString(blockHeight.toInt)
+
+    val rpcRequestId = Random.nextInt(10000000)
     val rpcRequest = Json.obj("jsonrpc" -> "2.0",
-                              "method" -> "getblockhash",
-                              "params" -> Json.arr(blockHeight))
+                              "method" -> "eth_getBlockByNumber",
+                              "id" -> rpcRequestId,
+                              "params" -> Json.arr(blockHeight, true))
 
     val (url, user, pass) = this.connectionParameters(ticker)
 
@@ -46,10 +53,28 @@ object BitcoinBlockchainAPI extends BlockchainAPI {
     }
   }
 
-  def getTransaction(ticker: String, txHash: String): Future[JsValue] = {
+  def getLatestBlock(ticker: String): Future[JsValue] = {
+    val rpcRequestId = Random.nextInt(10000000)
     val rpcRequest = Json.obj("jsonrpc" -> "2.0",
-                              "method" -> "getrawtransaction",
-                              "params" -> Json.arr(txHash, 1))
+                              "method" -> "eth_getBlockByNumber",
+                              "id" -> rpcRequestId,
+                              "params" -> Json.arr("latest", true))
+
+    val (url, user, pass) = this.connectionParameters(ticker)
+
+    WS.url(url).withAuth(user, pass, WSAuthScheme.BASIC).post(rpcRequest).map { response =>
+      Json.parse(response.body)
+    }
+  }
+
+  def getUncle(ticker: String, blockHash:String, uncleIndex:Int): Future[JsValue] = {
+    val index = Integer.toHexString(uncleIndex)
+
+    val rpcRequestId = Random.nextInt(10000000)    
+    val rpcRequest = Json.obj("jsonrpc" -> "2.0",
+                              "method" -> "eth_getUncleByBlockHashAndIndex",
+                              "id" -> rpcRequestId,
+                              "params" -> Json.arr(blockHash, index))
 
     val (url, user, pass) = this.connectionParameters(ticker)
 
@@ -59,8 +84,10 @@ object BitcoinBlockchainAPI extends BlockchainAPI {
   }
 
   def pushTransaction(ticker: String, hex:String): Future[(Int, String)] = {
+    val rpcRequestId = Random.nextInt(10000000)
     val rpcRequest = Json.obj("jsonrpc" -> "2.0",
-                              "method" -> "sendrawtransaction",
+                              "method" -> "eth_sendRawTransaction",
+                              "id" -> rpcRequestId,
                               "params" -> Json.arr(hex))
 
     val (url, user, pass) = this.connectionParameters(ticker)
