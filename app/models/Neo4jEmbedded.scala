@@ -43,7 +43,7 @@ object Neo4jEmbedded {
   val configIndexer:Config = ConfigFactory.parseFile(new File("indexer.conf"))
   val DB_PATH = Play.application.path.getPath + "/" + configIndexer.getString("dbname")
 
-  var db:Option[GraphDatabaseService] = None    
+  var db:Option[GraphDatabaseService] = None
 
   var blockLabel: Option[Label] = None
   var transactionLabel: Option[Label] = None
@@ -102,7 +102,7 @@ object Neo4jEmbedded {
     Future {
       val graphDb = db.get
       var tx:Transaction = graphDb.beginTx()
-      try { 
+      try {
         val blockNode:Node = graphDb.findNode( blockLabel.get, "hash", hash )
         val exist = blockNode.hasLabel( blockLabel.get )
         Right(true)
@@ -120,7 +120,7 @@ object Neo4jEmbedded {
 
   def getBlockNode(hash:String):Future[Either[Exception, Option[Long]]] = {
     Future {
-      try { 
+      try {
         val query = "MATCH (b:Block {hash:'"+hash+"'}) RETURN ID(b) as id"
         val resultIterator:ResourceIterator[Long] = db.get.execute( query ).columnAs( "id" )
         if ( resultIterator.hasNext() ){
@@ -140,7 +140,7 @@ object Neo4jEmbedded {
   def getBlockChildren(hash:String):Future[Either[Exception, List[String]]] = {
     Future {
       val graphDb = db.get
-      try { 
+      try {
         val query = "MATCH (b:Block {hash: '"+hash+"'})<-[:FOLLOWS]-(nextBlock:Block) RETURN nextBlock"
         var result:org.neo4j.graphdb.Result = graphDb.execute( query )
         val childrenNode:ResourceIterator[Node] = result.columnAs( "nextBlock" )
@@ -190,7 +190,7 @@ object Neo4jEmbedded {
       }
       finally {
         tx.close()
-      } 
+      }
     }
   }
 
@@ -229,10 +229,10 @@ object Neo4jEmbedded {
     }
   }
 
-  
+
   private def getInputOutputNode(txHash: String, outputIndex:Long, createOutputTx:Boolean = true):Node = {
     val graphDb = db.get
-    
+
     var optNode:Option[Node] = None
 
     // Find Node:
@@ -241,7 +241,7 @@ object Neo4jEmbedded {
     if ( nodes.hasNext() ){
           optNode = Some(nodes.next())
       }
-    
+
     optNode match {
       case Some(node) => node
       case None => {
@@ -257,7 +257,7 @@ object Neo4jEmbedded {
             txNode.createRelationshipTo( inputoutputNode , emits )
           }
           case false => /* nothing */
-        }         
+        }
 
         inputoutputNode
       }
@@ -404,7 +404,7 @@ object Neo4jEmbedded {
     Future {
       val graphDb = db.get
       var tx:Transaction = graphDb.beginTx()
-      try { 
+      try {
 
         val query = """
           MATCH (b:Block)
@@ -421,7 +421,7 @@ object Neo4jEmbedded {
           val blockNode:Node = nodes.next()
 
           //Result
-          val result = Json.obj( 
+          val result = Json.obj(
             "hash" -> blockNode.getProperty("hash").toString,
             "height" -> blockNode.getProperty("height").toString.toLong,
             "time" -> blockNode.getProperty("time").toString.toLong
@@ -466,7 +466,7 @@ object Neo4jEmbedded {
     Future {
       val graphDb = db.get
       var tx:Transaction = graphDb.beginTx()
-      try { 
+      try {
 
         val addresses: Array[String] = addressesRaw.split(",")
 
@@ -499,12 +499,13 @@ object Neo4jEmbedded {
           }
 
           //Result
-          result += Json.obj( 
+          result += Json.obj(
             "transaction_hash" -> txNode.getProperty("hash").toString,
             "output_index" -> outputNode.getProperty("output_index").toString.toLong,
             "value" -> outputNode.getProperty("value").toString.toLong,
             "addresses" -> addresses
           )
+          // TODO : add confirmations in response, we need a current height variable produce to calculate it
         }
 
         Right(Json.toJson(result))
@@ -523,7 +524,7 @@ object Neo4jEmbedded {
     Future {
       val graphDb = db.get
       var tx:Transaction = graphDb.beginTx()
-      try { 
+      try {
 
         val txsHashes: Array[String] = txsHashesRaw.split(",")
 
@@ -570,7 +571,7 @@ object Neo4jEmbedded {
     Future {
       val graphDb = db.get
       var tx:Transaction = graphDb.beginTx()
-      try { 
+      try {
 
         val txsHashes: Array[String] = txsHashesRaw.split(",")
 
@@ -592,7 +593,7 @@ object Neo4jEmbedded {
           val txNode:Node = nodes.next()
 
           //Result
-          result += Json.obj( 
+          result += Json.obj(
             "transaction_hash" -> txNode.getProperty("hash").toString,
             "hex" -> txNode.getProperty("hex").toString
           )
@@ -615,7 +616,7 @@ object Neo4jEmbedded {
     Future {
       val graphDb = db.get
       var tx:Transaction = graphDb.beginTx()
-      try { 
+      try {
         val blockNode:Node = graphDb.findNode( blockLabel.get, "hash", hash )
         val height = blockNode.getProperty("height").toString.toLong
         Right(height)
@@ -635,6 +636,8 @@ object Neo4jEmbedded {
     val blockNode:Node = txNode.getSingleRelationship( contains , Direction.INCOMING ).getStartNode()
 
     //Inputs
+    var isCoinbase: Boolean = false
+    var inputsValue: Long = 0
     var inputs:Map[Long, JsValue] = Map()
     for (relationship <- txNode.getRelationships(supplies, Direction.INCOMING)){
       //Input
@@ -651,6 +654,7 @@ object Neo4jEmbedded {
 
       inputNode.hasProperty("coinbase") match {
         case true => {
+          isCoinbase = true
           inputs(inputIndex) = Json.obj(
             "input_index" -> inputIndex,
             "coinbase" -> inputNode.getProperty("coinbase").toString,
@@ -658,19 +662,25 @@ object Neo4jEmbedded {
           )
         }
         case false => {
+          val value = inputNode.getProperty("value").toString.toLong
+          inputsValue = inputsValue + value
+
+          val prevTxNode:Node = inputNode.getSingleRelationship( emits , Direction.INCOMING ).getStartNode()
+
           inputs(inputIndex) = Json.obj(
             "input_index" -> inputIndex,
+            "output_hash" -> prevTxNode.getProperty("hash").toString,
             "output_index" -> inputNode.getProperty("output_index").toString.toLong,
-            "value" -> inputNode.getProperty("value").toString.toLong,
+            "value" -> value,
             "addresses" -> addresses,
-            "script_hex" -> inputNode.getProperty("script_hex").toString,
-            "sequence" -> inputNode.getProperty("sequence").toString.toLong
+            "script_signature" -> inputNode.getProperty("script_hex").toString
           )
         }
       }
     }
 
     //Outputs
+    var outputsValue: Long = 0
     var outputs:Map[Long, JsValue] = Map()
     for (relationship <- txNode.getRelationships(emits, Direction.OUTGOING)){
       //Output
@@ -685,9 +695,12 @@ object Neo4jEmbedded {
         addresses += addressNode.getProperty("value").toString
       }
 
+      val value = outputNode.getProperty("value").toString.toLong
+      outputsValue = outputsValue + value
+
       outputs(outputIndex) = Json.obj(
         "output_index" -> outputIndex,
-        "value" -> outputNode.getProperty("value").toString.toLong,
+        "value" -> value,
         "addresses" -> addresses,
         "script_hex" -> outputNode.getProperty("script_hex").toString
       )
@@ -696,8 +709,11 @@ object Neo4jEmbedded {
     val inputsList = ListMap(inputs.toSeq.sortBy(_._1):_*).values.toList
     val outputsList = ListMap(outputs.toSeq.sortBy(_._1):_*).values.toList
 
+    val fees: Long = if(isCoinbase) 0 else inputsValue - outputsValue
+    val amount: Long = outputsValue
+
     //Result
-    val result = Json.obj( 
+    val result = Json.obj(
       "hash" -> txNode.getProperty("hash").toString,
       "received_at" -> txNode.getProperty("received_at").toString.toLong,
       "lock_time" -> txNode.getProperty("lock_time").toString.toLong,
@@ -707,8 +723,11 @@ object Neo4jEmbedded {
         "time" -> blockNode.getProperty("time").toString.toLong
       ),
       "inputs" -> inputsList,
-      "outputs" -> outputsList
+      "outputs" -> outputsList,
+      "fees" -> fees,
+      "amount" -> amount
     )
+    // TODO : add confirmations in response, we need a current height variable produce to calculate
 
     Right(Json.toJson(result))
   }
@@ -717,14 +736,14 @@ object Neo4jEmbedded {
     Future {
       val graphDb = db.get
       var tx:Transaction = graphDb.beginTx()
-      try { 
+      try {
 
         val addresses: Array[String] = addressesRaw.split(",")
 
         val query = """
           MATCH (a:Address)<-[:IS_SENT_TO]-(io:InputOutput)--(tx:Transaction)<-[:CONTAINS]-(b:Block)
           WHERE a.value IN { addresses } AND b.height > { blockHeight }
-          WITH tx, b ORDER BY b.height ASC LIMIT 50 
+          WITH tx, b ORDER BY b.height ASC LIMIT 50
           RETURN DISTINCT tx
         """
         var parameters:java.util.Map[String,Object] = new java.util.HashMap()
