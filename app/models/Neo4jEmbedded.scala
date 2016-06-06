@@ -420,17 +420,63 @@ object Neo4jEmbedded {
           //Block
           val blockNode:Node = nodes.next()
 
-          //Result
-          val result = Json.obj(
-            "hash" -> blockNode.getProperty("hash").toString,
-            "height" -> blockNode.getProperty("height").toString.toLong,
-            "time" -> blockNode.getProperty("time").toString.toLong
-          )
-
-          Right(result)
+          getBlock(blockNode) match {
+            case Right(json) => {
+              Right(json)
+            }
+            case Left(e) => {
+              Left(new Exception("TODO"))
+            }
+          }
         }else{
           Left(new Exception("TODO"))
         }
+      } catch {
+        case e:Exception => {
+          Left(e)
+        }
+      }finally {
+        tx.close()
+      }
+    }
+  }
+
+  def getBlocks(blockHashesRaw:String):Future[Either[Exception, JsValue]] = {
+    Future {
+      val graphDb = db.get
+      var tx:Transaction = graphDb.beginTx()
+      try { 
+
+        val blockHashes: Array[String] = blockHashesRaw.split(",")
+
+        val query = """
+          MATCH (b:Block)
+          WHERE b.hash IN { blockHashes }
+          RETURN b
+        """
+
+        var parameters:java.util.Map[String,Object] = new java.util.HashMap()
+        parameters.put( "blockHashes",  blockHashes)
+
+        var result:ListBuffer[JsValue] = ListBuffer()
+
+        val dbRes:org.neo4j.graphdb.Result = graphDb.execute(query, parameters)
+        val nodes:ResourceIterator[Node] = dbRes.columnAs( "b" )
+        while(nodes.hasNext()){
+          //Block
+          val blockNode:Node = nodes.next()
+
+          getBlock(blockNode) match {
+            case Right(json) => {
+              result += json
+            }
+            case Left(e) => {
+              //TODO
+            }
+          }
+        }
+
+        Right(Json.toJson(result))
       } catch {
         case e:Exception => {
           Left(e)
@@ -628,6 +674,17 @@ object Neo4jEmbedded {
         tx.close()
       }
     }
+  }
+
+  private def getBlock(blockNode:Node):Either[Exception, JsValue] = {
+    //Result
+    val result = Json.obj( 
+      "hash" -> blockNode.getProperty("hash").toString,
+      "height" -> blockNode.getProperty("height").toString.toLong,
+      "time" -> blockNode.getProperty("time").toString.toLong
+    )
+
+    Right(result)
   }
 
   private def getTransaction(txNode:Node):Either[Exception, JsValue] = {

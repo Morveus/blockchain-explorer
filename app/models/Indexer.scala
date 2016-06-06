@@ -84,9 +84,10 @@ object Indexer {
                   if(resultsFuts.size > 0) {
                     val futuresResponses: Future[ListBuffer[Unit]] = Future.sequence(resultsFuts)
                     futuresResponses.map { result =>
-                      
+                      pushNotification("new-reorg")
                     }
                   }else{
+                    pushNotification("new-reorg")
                     Future(Unit)
                   }
                 }
@@ -149,9 +150,9 @@ object Indexer {
                                   ApiLogs.debug(message) //Block added
                                   saveState(blockHash)
 
-                                  webSocketActor ! WebSocketActor.BroadcastToAll(Json.obj("type" -> "new-block", "hash" -> blockHash))
-
-                                  Future(Right(message))
+                                  pushNotification("new-block", blockHash).map { result =>
+                                    Right(message)
+                                  }
                                 }
                                 case Left(e) => {
                                   ApiLogs.error("Indexer.process('"+blockHash+"') Exception : " + e.toString)
@@ -182,8 +183,46 @@ object Indexer {
       }
 
     }
+  }
 
-
+  private def pushNotification(datatype:String, hash:String = "") = {
+    datatype match {
+      case "new-block" => {
+        Neo4jEmbedded.getBlocks(hash).map { result =>
+          result match {
+            case Right(json) => {
+              var message = Json.obj("payload" -> Json.obj(
+                  "type" -> datatype,
+                  "block_chain" -> ticker,
+                  "block" -> json(0)))
+              webSocketActor ! WebSocketActor.BroadcastToAll(message)
+            }
+            case Left(e) => ApiLogs.error("Indexer.pushNotification(Block '"+hash+"') Exception : " + e.toString)
+          }
+        }
+      }
+      case "new-transaction" => {
+        Neo4jEmbedded.getTransactions(hash).map { result =>
+          result match {
+            case Right(json) => {
+              var message = Json.obj("payload" -> Json.obj(
+                  "type" -> datatype,
+                  "block_chain" -> ticker,
+                  "transaction" -> json(0)))
+              webSocketActor ! WebSocketActor.BroadcastToAll(message)
+            }
+            case Left(e) => ApiLogs.error("Indexer.pushNotification(Transaction '"+hash+"') Exception : " + e.toString)
+          }
+        }
+      }
+      case "new-reorg" => {
+        Future {
+          var message = Json.obj("payload" -> Json.obj(
+            "type" -> "new-reorg"))
+          webSocketActor ! WebSocketActor.BroadcastToAll(message)
+        }
+      }
+    }
   }
 
   private def startBatchMod() = {
