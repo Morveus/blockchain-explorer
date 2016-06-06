@@ -38,6 +38,9 @@ object Neo4jBlockchainIndexer {
   implicit val transactionWrites  = Json.writes[RPCTransaction]
   implicit val blockReads         = Json.reads[RPCBlock]
   implicit val blockWrites        = Json.writes[RPCBlock]
+  implicit val pendingBlockReads         = Json.reads[RPCPendingBlock]
+  implicit val pendingBlockWrites        = Json.writes[RPCPendingBlock]
+  
 
  
 
@@ -94,6 +97,10 @@ object Neo4jBlockchainIndexer {
         }
       }
     }
+  }
+
+  def processTransactions(mode:String, ticker:String, transactions:List[RPCTransaction]):Future[Either[Exception,String]] = {
+    indexTransactions(mode, transactions)
   }
 
   def getBlock(ticker:String, blockHash:String):Future[Either[Exception,RPCBlock]] = {
@@ -174,6 +181,35 @@ object Neo4jBlockchainIndexer {
     }
   }
 
+  def getMempool(ticker:String):Future[Either[Exception,List[RPCTransaction]]] = {
+    blockchainsList(ticker).getMempool(ticker).map { response =>
+      (response \ "result") match {
+        case JsNull => {
+          ApiLogs.error("Mempool not found")
+          Left(new Exception("Mempool not found"))
+        }
+        case result: JsObject => {
+          result.validate[RPCPendingBlock] match {
+            case b: JsSuccess[RPCPendingBlock] => {
+              b.get.transactions match {
+                case None => Right(List())
+                case Some(txs) => Right(txs)
+              }
+            }
+            case e: JsError => {
+              ApiLogs.error("Invalid mempool from RPC ("+e.toString+") : "+response)
+              Left(new Exception("Invalid mempool from RPC ("+e.toString+") : "+response))
+            }
+          }
+        }
+        case _ => {
+          ApiLogs.error("Invalid mempool from RPC : "+response)
+          Left(new Exception("Invalid mempool from RPC : "+response))
+        }
+      }
+    }
+  }
+
   private def getUncle(ticker:String, blockHash:String, uncleIndex: Int):Future[Either[Exception,(RPCBlock, Integer)]] = {
     blockchainsList(ticker).getUncle(ticker, blockHash, uncleIndex).map { response =>
       (response \ "result") match {
@@ -229,6 +265,25 @@ object Neo4jBlockchainIndexer {
 
           Right(message, blockNode, rpcBlock.hash)
           
+        }
+      }
+    } recover {
+      case e:Exception => Left(e)
+    }
+  }
+
+  private def indexTransactions(mode:String, transactions:List[RPCTransaction]):Future[Either[Exception,String]] = {
+
+    var method = mode match {
+      case "batch" => Future(Left(new Exception("mode unavailable")))
+      case _ => Neo4jEmbedded.insertTransactions(transactions)
+    }
+
+    method.map { result =>
+      result match {
+        case Left(e) => Left(e)
+        case Right(message) => {
+          Right(message)
         }
       }
     } recover {

@@ -96,4 +96,18 @@ object EthereumBlockchainAPI extends BlockchainAPI {
       (response.status, response.body)
     }
   }
+
+  def getMempool(ticker: String): Future[JsValue] = {
+    val rpcRequestId = Random.nextInt(10000000)
+    val rpcRequest = Json.obj("jsonrpc" -> "2.0",
+                              "method" -> "eth_getBlockByNumber",
+                              "id" -> rpcRequestId,
+                              "params" -> Json.arr("pending", true))
+
+    val (url, user, pass) = this.connectionParameters(ticker)
+
+    WS.url(url).withAuth(user, pass, WSAuthScheme.BASIC).post(rpcRequest).map { response =>
+      Json.parse(response.body)
+    }
+  }
 }

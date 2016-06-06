@@ -189,6 +189,27 @@ object Indexer {
     }
   }
 
+  private def mempool():Future[Unit] = {
+    Neo4jBlockchainIndexer.getMempool(ticker).map { result =>
+      result match {
+        case Right(transactions) => {
+          Neo4jBlockchainIndexer.processTransactions("standard", ticker, transactions).map { response =>
+            response match {
+              case Right(s) => ApiLogs.debug(s)
+              case Left(e) => ApiLogs.error("Indexer.mempool() Exception : " + e.toString)
+            }
+            
+            Thread.sleep(500)
+            if(!Neo4jEmbedded.isShutdowning){
+              mempool()
+            }
+          }
+        }
+        case Left(e) => ApiLogs.error("Indexer.mempool() Exception : " + e.toString)
+      }
+    }
+  }
+
   private def pushNotification(datatype:String, hash:String = "") = {
     datatype match {
       case "new-block" => {
@@ -369,6 +390,8 @@ object Indexer {
                 case true =>  process(blockHeight + 1)
                 case false => {
                   ApiLogs.debug("Blocks synchronized !")
+
+                  mempool()
                   launched = false
                 }
               }

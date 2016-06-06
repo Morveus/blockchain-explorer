@@ -28,6 +28,10 @@ case class RPCBlock(
   uncles: Option[List[String]]
 )
 
+case class RPCPendingBlock(
+  transactions: Option[List[RPCTransaction]]
+)
+
 case class RPCTransaction(
   hash: String,
   nonce: String,

@@ -34,6 +34,10 @@ import org.neo4j.graphdb.RelationshipType;
 
 import com.typesafe.config._
 
+import java.time._
+import java.sql.Timestamp
+import java.lang.Math
+
 import models._
 import utils._
 import redis.clients.jedis._
@@ -42,6 +46,8 @@ object Neo4jEmbedded {
   val config  = play.Play.application.configuration
   val configIndexer:Config = ConfigFactory.parseFile(new File("indexer.conf"))
   val DB_PATH = Play.application.path.getPath + "/" + configIndexer.getString("dbname")
+
+  val utcZoneId = ZoneId.of("UTC")
 
   var db:Option[GraphDatabaseService] = None    
 
@@ -205,7 +211,7 @@ object Neo4jEmbedded {
 
   // }
 
-  private def getTransactionNode(txHash:String):Node = {
+  private def getTransactionNode(txHash:String):(Node, Boolean) = {
     val graphDb = db.get
 
     var optNode:Option[Node] = None
@@ -214,17 +220,17 @@ object Neo4jEmbedded {
     val result:org.neo4j.graphdb.Result = graphDb.execute("MATCH (tx:Transaction {hash: '"+txHash+"'}) RETURN tx")
     val nodes:ResourceIterator[Node] = result.columnAs( "tx" )
     if ( nodes.hasNext() ){
-          optNode = Some(nodes.next())
-      }
+      optNode = Some(nodes.next())
+    }
 
     optNode match {
-      case Some(node) => node
+      case Some(node) => (node, true)
       case None => {
         // If doesn't exist, create :
         val txNode:Node = graphDb.createNode( transactionLabel.get )
         txNode.setProperty( "hash", txHash )
 
-        txNode
+        (txNode, false)
       }
     }
   }
@@ -308,33 +314,98 @@ object Neo4jEmbedded {
         // Transactions
         for(rpcTransaction <- rpcBlock.transactions.get){
 
-          var txNode:Node = graphDb.createNode( transactionLabel.get )
-          txNode.setProperty( "hash", rpcTransaction.hash )
-          txNode.setProperty( "index", Converter.hexToInt(rpcTransaction.transactionIndex) )
-          txNode.setProperty( "nonce", rpcTransaction.nonce )
-          txNode.setProperty( "value", Converter.hexToBigDecimal(rpcTransaction.value).bigDecimal.toPlainString )
-          txNode.setProperty( "gas", Converter.hexToBigDecimal(rpcTransaction.gas).bigDecimal.toPlainString )
-          txNode.setProperty( "gas_price", Converter.hexToBigDecimal(rpcTransaction.gasPrice).bigDecimal.toPlainString )
-          txNode.setProperty( "received_at", Converter.hexToInt(rpcBlock.timestamp) )
-          txNode.setProperty( "input", rpcTransaction.input )
+          var (txNode:Node, alreadyExist) = getTransactionNode(rpcTransaction.hash)
+
+          if(alreadyExist == false) {
+            txNode.setProperty( "index", Converter.hexToInt(rpcTransaction.transactionIndex) )
+            txNode.setProperty( "nonce", rpcTransaction.nonce )
+            txNode.setProperty( "value", Converter.hexToBigDecimal(rpcTransaction.value).bigDecimal.toPlainString )
+            txNode.setProperty( "gas", Converter.hexToBigDecimal(rpcTransaction.gas).bigDecimal.toPlainString )
+            txNode.setProperty( "gas_price", Converter.hexToBigDecimal(rpcTransaction.gasPrice).bigDecimal.toPlainString )
+            txNode.setProperty( "received_at", Converter.hexToInt(rpcBlock.timestamp) )
+            txNode.setProperty( "input", rpcTransaction.input )
+
+            var fromNode:Node = getAddressNode(rpcTransaction.from)
+            txNode.createRelationshipTo( fromNode, issentfrom)
+
+            rpcTransaction.to match {
+              case Some(to) => {
+                var toNode:Node = getAddressNode(to)
+                txNode.createRelationshipTo( toNode, issentto)
+              }
+              case None => /* nothing */
+            }
+          }
 
           blockNode.createRelationshipTo( txNode, contains )
-
-          var fromNode:Node = getAddressNode(rpcTransaction.from)
-          txNode.createRelationshipTo( fromNode, issentfrom)
-
-          rpcTransaction.to match {
-            case Some(to) => {
-              var toNode:Node = getAddressNode(to)
-              txNode.createRelationshipTo( toNode, issentto)
-            }
-            case None => /* nothing */
-          }
+          
         }
 
         tx.success()
 
         Right("Block '"+rpcBlock.hash+"' (n°"+ Converter.hexToInt(rpcBlock.number).toString +") added !", 0)
+
+      } catch {
+        case e:Exception => {
+          Left(e)
+        }
+      }
+      finally {
+        tx.close()
+      }
+    }
+  }
+
+  def insertTransactions(transactions:List[RPCTransaction]):Future[Either[Exception,String]] = {
+    Future {
+
+      val graphDb = db.get
+      var tx:Transaction = graphDb.beginTx()
+
+      try {
+
+        if(isShutdowning){
+          throw new Exception("shutdown...")
+        }
+
+        val utcDateTime = ZonedDateTime.now.withZoneSameInstant(utcZoneId)
+
+
+        
+
+        // Transactions
+        for(rpcTransaction <- transactions){
+
+          var (txNode:Node, alreadyExist) = getTransactionNode(rpcTransaction.hash)
+
+          if(alreadyExist == false) {
+
+            var timestamp:Int = (Timestamp.valueOf(utcDateTime.toLocalDateTime).getTime / 1000).toInt
+
+            txNode.setProperty( "index", Converter.hexToInt(rpcTransaction.transactionIndex) )
+            txNode.setProperty( "nonce", rpcTransaction.nonce )
+            txNode.setProperty( "value", Converter.hexToBigDecimal(rpcTransaction.value).bigDecimal.toPlainString )
+            txNode.setProperty( "gas", Converter.hexToBigDecimal(rpcTransaction.gas).bigDecimal.toPlainString )
+            txNode.setProperty( "gas_price", Converter.hexToBigDecimal(rpcTransaction.gasPrice).bigDecimal.toPlainString )
+            txNode.setProperty( "received_at", timestamp )
+            txNode.setProperty( "input", rpcTransaction.input )
+
+            var fromNode:Node = getAddressNode(rpcTransaction.from)
+            txNode.createRelationshipTo( fromNode, issentfrom)
+
+            rpcTransaction.to match {
+              case Some(to) => {
+                var toNode:Node = getAddressNode(to)
+                txNode.createRelationshipTo( toNode, issentto)
+              }
+              case None => /* nothing */
+            }
+          }          
+        }
+
+        tx.success()
+
+        Right("Transactions added !")
 
       } catch {
         case e:Exception => {

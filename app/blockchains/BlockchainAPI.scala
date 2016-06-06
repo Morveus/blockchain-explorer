@@ -15,4 +15,6 @@ trait BlockchainAPI {
 	def getUncle(ticker: String, blockHash: String, uncleIndex:Int): Future[JsValue]
 
     def pushTransaction(ticker: String, hex: String): Future[(Int, String)]
+
+    def getMempool(ticker: String): Future[JsValue]
 }
