@@ -33,8 +33,6 @@ object RESTApi extends Controller {
   var confIndexer: Config = ConfigFactory.parseFile(new File("indexer.conf"))
   var ticker:String = confIndexer.getString("ticker")
 
-
-  Akka.system.actorOf(Props[WebSocketActor], name = "blockchain-explorer")
   val webSocketActor = Akka.system.actorSelection("user/blockchain-explorer")
   def ws = WebSocket.tryAccept[JsValue] {
     request =>
