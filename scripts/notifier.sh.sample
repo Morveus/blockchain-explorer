@@ -1,0 +1,21 @@
+#!/bin/bash
+serverIP="149.202.89.37"
+serverPort="9104"
+
+while true
+do
+        lastLine=$(tail --lines=500 /var/log/syslog | grep "geth" | grep "imported" | grep "block" | tail -n 1)
+        previousBlock=$(cat previousBlock | sed -n 's/.*\#\([0-9]*\).*/\1/p')
+        lastBlock=$(echo $lastLine | sed -n 's/.*\#\([0-9]*\).*/\1/p')
+
+        if [ "$lastBlock" == "$previousBlock" ]
+        then
+                sleep 1
+        else
+                echo "New block: $lastBlock. Notifying $serverIP:$serverPort..."
+                curl "http://$serverIP:$serverPort/newblock/$lastBlock"
+                sleep 5
+        fi
+
+        echo $lastLine > previousBlock
+done
