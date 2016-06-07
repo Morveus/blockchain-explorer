@@ -1,5 +1,5 @@
 #!/bin/bash
-serverIP="149.202.89.37"
+serverIP="127.0.0.1"
 serverPort="9104"
 
 while true
@@ -13,7 +13,7 @@ do
                 sleep 1
         else
                 echo "New block: $lastBlock. Notifying $serverIP:$serverPort..."
-                curl "http://$serverIP:$serverPort/newblock/$lastBlock"
+                curl --silent "http://$serverIP:$serverPort/newblock/$lastBlock"
                 sleep 5
         fi
 
