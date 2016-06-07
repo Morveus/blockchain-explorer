@@ -1,3 +1,4 @@
+GET      /v1/ws                                             controllers.Application.ws
 
 GET      /v1/blocks/current                                 controllers.RESTApi.getCurrentBlock
 
@@ -7,6 +8,3 @@ GET      /v1/addresses/:addressesHashes/unspents            controllers.RESTApi.
 GET      /v1/transactions/:txsHashes                        controllers.RESTApi.getTransactions(txsHashes: String)
 GET      /v1/transactions/:txsHashes/hex                    controllers.RESTApi.getTransactionsHex(txsHashes: String)
 POST     /v1/transactions/send                              controllers.RESTApi.sendTransaction
-
-
-
