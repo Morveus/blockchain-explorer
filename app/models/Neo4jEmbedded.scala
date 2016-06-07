@@ -181,13 +181,10 @@ object Neo4jEmbedded {
         }
 
         val blockNode:Node = graphDb.findNode( blockLabel.get, "hash", hash )
-        println("hash: "+blockNode.getProperty("hash"))
         blockNode.setProperty("main_chain", false)
-        println("main_chain: "+blockNode.getProperty("main_chain"))
-        println("trololo")
         tx.success()
 
-            Right("Block '"+hash+"' setMainchain = false !")
+        Right("Block '"+hash+"' setMainchain = false !")
 
       } catch {
         case e:Exception => {
@@ -356,7 +353,7 @@ object Neo4jEmbedded {
     }
   }
 
-  def insertTransactions(transactions:List[RPCTransaction]):Future[Either[Exception,String]] = {
+  def insertTransactions(transactions:List[RPCTransaction]):Future[Either[Exception,(String, ListBuffer[String])]] = {
     Future {
 
       val graphDb = db.get
@@ -370,7 +367,7 @@ object Neo4jEmbedded {
 
         val utcDateTime = ZonedDateTime.now.withZoneSameInstant(utcZoneId)
 
-
+        var txsAdded:ListBuffer[String] = ListBuffer()
         
 
         // Transactions
@@ -400,12 +397,14 @@ object Neo4jEmbedded {
               }
               case None => /* nothing */
             }
+
+            txsAdded += rpcTransaction.hash
           }          
         }
 
         tx.success()
 
-        Right("Transactions added !")
+        Right(txsAdded.size + " transaction(s) added !", txsAdded)
 
       } catch {
         case e:Exception => {
@@ -606,18 +605,28 @@ object Neo4jEmbedded {
   private def getTransaction(txNode:Node):Either[Exception, JsValue] = {
 
     //Block
-    val blockNode:Node = txNode.getSingleRelationship( contains , Direction.INCOMING ).getStartNode()
+    var block:JsValue = txNode.getSingleRelationship( contains , Direction.INCOMING ) match {
+      case r:Relationship => {
+        val blockNode:Node = r.getStartNode()
+        Json.obj(
+          "hash" -> blockNode.getProperty("hash").toString,
+          "height" -> blockNode.getProperty("height").toString.toLong,
+          "time" -> blockNode.getProperty("time").toString.toLong
+        )
+      }
+      case null => JsNull
+    }
 
     //From
     val fromNode:Node = txNode.getSingleRelationship( issentfrom , Direction.OUTGOING ).getEndNode()
 
     //To
-    var toValue = txNode.getSingleRelationship( issentto , Direction.OUTGOING ) match {
+    var to:JsValue = txNode.getSingleRelationship( issentto , Direction.OUTGOING ) match {
       case r:Relationship => {
         val toNode:Node = r.getEndNode()
-        toNode.getProperty("value").toString
+        JsString(toNode.getProperty("value").toString)
       }
-      case null => null
+      case null => JsNull
     }
 
     //Result
@@ -625,19 +634,17 @@ object Neo4jEmbedded {
       "hash" -> txNode.getProperty("hash").toString,
       "received_at" -> txNode.getProperty("received_at").toString.toLong,
       "nonce" -> txNode.getProperty("nonce").toString,
-      "value" -> txNode.getProperty("value").toString.toLong,
-      "gas" -> txNode.getProperty("gas").toString.toLong,
-      "gas_price" -> txNode.getProperty("gas_price").toString.toLong,
+      "value" -> Converter.stringToBigDecimal(txNode.getProperty("value").toString),
+      "gas" -> Converter.stringToBigDecimal(txNode.getProperty("gas").toString),
+      "gas_price" -> Converter.stringToBigDecimal(txNode.getProperty("gas_price").toString),
       "from" -> fromNode.getProperty("value").toString,
-      "to" -> toValue,
+      "to" -> to,
       "input" -> txNode.getProperty("input").toString,
       "index" -> txNode.getProperty("index").toString.toLong,
-      "block" -> Json.obj(
-        "hash" -> blockNode.getProperty("hash").toString,
-        "height" -> blockNode.getProperty("height").toString.toLong,
-        "time" -> blockNode.getProperty("time").toString.toLong
-      )
+      "block" -> block
     )
+
+
 
     Right(result)
   }

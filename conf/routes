@@ -6,8 +6,7 @@
 # Home page
 GET     /                           controllers.Application.index
 
-GET /newblock/:hash                 controllers.Application.newblock(hash: String)
-GET /ws                             controllers.Application.ws
+GET /newblock/:height                 controllers.Application.newblock(height: Long)
 
 
 

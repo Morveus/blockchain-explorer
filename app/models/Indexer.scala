@@ -64,10 +64,21 @@ object Indexer {
     }
   }
   
-  def newblock(blockHash:String) = {
+  def newblock(blockHeight:Long) = {
      //Si l'indexation des précédents blocks est terminée:
     if(launched == false){
-      process(blockHash)
+
+      Neo4jBlockchainIndexer.getBlockByHeight(ticker, blockHeight).map { result => 
+        result match {
+          case Left(e) => {
+            ApiLogs.error("Indexer.newblock("+blockHeight+") Exception : " + e.toString)
+            Future(Left(e))
+          }
+          case Right(rpcBlock) => {
+            process(rpcBlock.hash)
+          }
+        }
+      }
     }
 
     def setNotMainchain(blockHash:String):Future[Unit] = {
@@ -87,10 +98,9 @@ object Indexer {
                   if(resultsFuts.size > 0) {
                     val futuresResponses: Future[ListBuffer[Unit]] = Future.sequence(resultsFuts)
                     futuresResponses.map { result =>
-                      pushNotification("new-reorg")
+                     
                     }
                   }else{
-                    pushNotification("new-reorg")
                     Future(Unit)
                   }
                 }
@@ -121,9 +131,18 @@ object Indexer {
                 Neo4jEmbedded.getBlockChildren(blockHash).flatMap { result =>
                   result match {
                     case Right(children) => {
+                      var resultsFuts: ListBuffer[Future[Unit]] = ListBuffer()
                       for(child <- children){
-                        setNotMainchain(child)
+                        resultsFuts += setNotMainchain(child)
                       }
+
+                      if(resultsFuts.size > 0) {
+                        val futuresResponses: Future[ListBuffer[Unit]] = Future.sequence(resultsFuts)
+                        futuresResponses.map { result =>
+                          pushNotification("new-reorg")
+                        }
+                      }     
+
                       Future(Right("process notMainchain fini"))
                     }
                     case Left(e) => {
@@ -195,7 +214,15 @@ object Indexer {
         case Right(transactions) => {
           Neo4jBlockchainIndexer.processTransactions("standard", ticker, transactions).map { response =>
             response match {
-              case Right(s) => ApiLogs.debug(s)
+              case Right(s) => {
+                var (message, transactions) = s
+                for(transaction <- transactions){
+                  pushNotification("new-transaction", transaction)
+                }
+                if(transactions.size > 0){
+                  ApiLogs.debug(message)
+                }                
+              }
               case Left(e) => ApiLogs.error("Indexer.mempool() Exception : " + e.toString)
             }
             

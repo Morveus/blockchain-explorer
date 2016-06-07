@@ -4,6 +4,7 @@ import play.api._
 import play.api.mvc._
 import play.api.Play.current
 import play.api.libs.json._
+import play.api.libs.concurrent._
 import scala.concurrent.Future
 import scala.util.{Success, Failure}
 import scala.concurrent.ExecutionContext.Implicits.global
@@ -14,6 +15,14 @@ import blockchains._
 import com.typesafe.config._
 import java.io._
 
+import actors._
+import akka.actor.ActorSystem
+import akka.actor.Props
+import akka.pattern.ask
+import akka.util.Timeout
+import scala.concurrent.duration._
+import play.api.libs.iteratee._
+
 
 
 object RESTApi extends Controller {
@@ -23,6 +32,31 @@ object RESTApi extends Controller {
 
   var confIndexer: Config = ConfigFactory.parseFile(new File("indexer.conf"))
   var ticker:String = confIndexer.getString("ticker")
+
+
+  Akka.system.actorOf(Props[WebSocketActor], name = "blockchain-explorer")
+  val webSocketActor = Akka.system.actorSelection("user/blockchain-explorer")
+  def ws = WebSocket.tryAccept[JsValue] {
+    request =>
+    implicit val timeout = Timeout(3 seconds)
+
+    val userId = java.util.UUID.randomUUID.toString
+
+    // using the ask pattern of akka,
+    // get the enumerator for that user
+    (webSocketActor ? WebSocketActor.StartSocket(userId)) map {
+      enumerator =>
+
+      // create a Iteratee which process the input and
+      // and send a SocketClosed message to the actor when
+      // connection is closed from the client
+      Right(Iteratee.foreach[JsValue](msg => {
+        webSocketActor ! WebSocketActor.JsFromClient(userId, msg)
+      }).map{ _ =>
+        webSocketActor ! WebSocketActor.SocketClosed(userId)
+      }, enumerator.asInstanceOf[Enumerator[JsValue]])
+    }
+  }
 
   
   def getCurrentBlock = Action.async {

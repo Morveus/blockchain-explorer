@@ -1,4 +1,4 @@
-
+GET      /v1/ws                                             controllers.RESTApi.ws
 GET      /v1/blocks/current                                 controllers.RESTApi.getCurrentBlock
 
 GET      /v1/addresses/:addressesHashes/transactions        controllers.RESTApi.getAddressesTransactions(addressesHashes: String, blockHash: Option[String])

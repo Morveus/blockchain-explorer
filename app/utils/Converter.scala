@@ -13,4 +13,9 @@ object Converter {
     val bigInt = new BigInteger(hexValue, 16)
     BigDecimal.apply( bigInt )
   }
+
+  def stringToBigDecimal(value:String):BigDecimal = {
+  	val bigInt = new BigInteger(value, 10)
+    BigDecimal.apply( bigInt )
+  }
 }

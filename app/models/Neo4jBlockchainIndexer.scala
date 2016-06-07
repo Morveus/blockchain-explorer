@@ -99,7 +99,7 @@ object Neo4jBlockchainIndexer {
     }
   }
 
-  def processTransactions(mode:String, ticker:String, transactions:List[RPCTransaction]):Future[Either[Exception,String]] = {
+  def processTransactions(mode:String, ticker:String, transactions:List[RPCTransaction]):Future[Either[Exception,(String, ListBuffer[String])]] = {
     indexTransactions(mode, transactions)
   }
 
@@ -272,7 +272,7 @@ object Neo4jBlockchainIndexer {
     }
   }
 
-  private def indexTransactions(mode:String, transactions:List[RPCTransaction]):Future[Either[Exception,String]] = {
+  private def indexTransactions(mode:String, transactions:List[RPCTransaction]):Future[Either[Exception,(String, ListBuffer[String])]] = {
 
     var method = mode match {
       case "batch" => Future(Left(new Exception("mode unavailable")))
