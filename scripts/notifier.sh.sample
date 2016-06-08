@@ -1,0 +1,25 @@
+#!/bin/bash
+serverIP="127.0.0.1"
+serverPort="9xxx"
+backendIP=""
+backendPort=""
+backendUser=""
+backendPassword=""
+
+while true
+do
+        lastBlock=$(curl --silent --user $backendUser:$backendPassword --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "getbestblockhash", "params": [] }' -H 'content-type: text/plain;' http://$backendIP:$backendPort | jq -r .result)
+        previousBlock=$(cat previousBlock)
+
+        if [ "$lastBlock" == "$previousBlock" ]
+        then
+                sleep 10
+        else
+                echo "New block: $lastBlock. Notifying $serverIP:$serverPort..."
+                curl --silent "http://$serverIP:$serverPort/newblock/$lastBlock"
+                sleep 60
+        fi
+
+        echo $lastBlock > previousBlock
+done
+
