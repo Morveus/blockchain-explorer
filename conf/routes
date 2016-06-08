@@ -12,13 +12,13 @@ GET /newblock/:hash                 controllers.Application.newblock(hash: Strin
 GET     /assets/*file               controllers.Assets.versioned(path="/public", file: Asset)
 
 
-GET      /v1/ws                                             controllers.Application.ws
+GET      /blockchain/v1/ws                                             controllers.Application.ws
 
-GET      /v1/blocks/current                                 controllers.RESTApi.getCurrentBlock
+GET      /blockchain/v1/blocks/current                                 controllers.RESTApi.getCurrentBlock
 
-GET      /v1/addresses/:addressesHashes/transactions        controllers.RESTApi.getAddressesTransactions(addressesHashes: String, blockHash: Option[String])
-GET      /v1/addresses/:addressesHashes/unspents            controllers.RESTApi.getAddressesUnspents(addressesHashes: String)
+GET      /blockchain/v1/addresses/:addressesHashes/transactions        controllers.RESTApi.getAddressesTransactions(addressesHashes: String, blockHash: Option[String])
+GET      /blockchain/v1/addresses/:addressesHashes/unspents            controllers.RESTApi.getAddressesUnspents(addressesHashes: String)
 
-GET      /v1/transactions/:txsHashes                        controllers.RESTApi.getTransactions(txsHashes: String)
-GET      /v1/transactions/:txsHashes/hex                    controllers.RESTApi.getTransactionsHex(txsHashes: String)
-POST     /v1/transactions/send                              controllers.RESTApi.sendTransaction
+GET      /blockchain/v1/transactions/:txsHashes                        controllers.RESTApi.getTransactions(txsHashes: String)
+GET      /blockchain/v1/transactions/:txsHashes/hex                    controllers.RESTApi.getTransactionsHex(txsHashes: String)
+POST     /blockchain/v1/transactions/send                              controllers.RESTApi.sendTransaction
