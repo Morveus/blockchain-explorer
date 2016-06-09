@@ -9,3 +9,5 @@ target
 graph-db
 conf/application.conf
 indexer.conf
+scripts/notifier.sh
+scripts/previousBlock
