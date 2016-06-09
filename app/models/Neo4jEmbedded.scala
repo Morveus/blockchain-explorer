@@ -679,17 +679,23 @@ object Neo4jEmbedded {
 
   private def getTransaction(txNode:Node):Either[Exception, JsValue] = {
 
+    val currentBlockHeight:Long = Indexer.currentBlockHeight
+
     //Block
-    val block:JsValue = txNode.getSingleRelationship( contains , Direction.INCOMING ) match {
+    val (block:JsValue, confirmations:Long) = txNode.getSingleRelationship( contains , Direction.INCOMING ) match {
       case r:Relationship => {
         val blockNode:Node = r.getStartNode()
-        Json.obj(
-          "hash" -> blockNode.getProperty("hash").toString,
-          "height" -> blockNode.getProperty("height").toString.toLong,
-          "time" -> blockNode.getProperty("time").toString.toLong
+        val blockHeight:Long = blockNode.getProperty("height").toString.toLong
+        (
+          Json.obj(
+            "hash" -> blockNode.getProperty("hash").toString,
+            "height" -> blockHeight,
+            "time" -> blockNode.getProperty("time").toString.toLong
+          ),
+          (currentBlockHeight - blockHeight + 1).toLong
         )
       }
-      case null => JsNull
+      case null => (JsNull, 0.toLong)
     }
 
     //From
@@ -728,7 +734,8 @@ object Neo4jEmbedded {
       "to" -> to,
       "input" -> txNode.getProperty("input").toString,
       "index" -> txNode.getProperty("index").toString.toLong,
-      "block" -> block
+      "block" -> block,
+      "confirmations" -> confirmations
     )
 
      // txNode.setProperty( "cumulative_gas_used", null )

@@ -58,9 +58,15 @@ object RESTApi extends Controller {
 
   
   def getCurrentBlock = Action.async {
-    Neo4jEmbedded.getCurrentBlock().map { result =>
+    val currentBlockHash = Indexer.currentBlockHash
+    Neo4jEmbedded.getBlocks(currentBlockHash).map { result =>
       result match {
-        case Right(json) => Ok(json)
+        case Right(json) => {
+          json.as[JsArray].value.size match {
+            case 1 => Ok(json(0))
+            case _ => InternalServerError
+          }
+        } 
         case Left(e) => BadRequest(e.toString)
       }
     }
@@ -73,8 +79,7 @@ object RESTApi extends Controller {
         case Left(e) => BadRequest(e.toString)
       }
     }
-  }
- 
+  } 
 
   def getAddressesTransactions(addressesHashes: String, blockHash: Option[String]) = Action.async {
     Neo4jEmbedded.getAddressesTransactions(addressesHashes, blockHash).map { result =>

@@ -36,8 +36,9 @@ object Indexer {
   val webSocketActor = Akka.system.actorSelection("user/blockchain-explorer")
 
   var isSaving = false
-  def saveState(blockHash:String, setStandardMod:Boolean = false) = {
+  def saveState(blockHash:String, blockHeight:Long, setStandardMod:Boolean = false) = {
     currentBlockHash = blockHash
+    currentBlockHeight = blockHeight
     Future {
       if(isSaving == false){
         isSaving = true
@@ -173,7 +174,7 @@ object Indexer {
                                 case Right(q) => {
                                   var (message, blockNode, blockHash) = q
                                   ApiLogs.debug(message) //Block added
-                                  saveState(blockHash)
+                                  saveState(blockHash, blockHeight)
 
                                   pushNotification("new-block", blockHash).map { result =>
                                     Right(message)
@@ -318,8 +319,8 @@ object Indexer {
                     }
                     case None => {
                       ApiLogs.error("Indexer Exception : previous node not found !")
-                      //Neo4jBatchInserter.startService(ticker) //test
-                      //process(currentBlockHeight + 1)         //test
+                      // Neo4jBatchInserter.startService(ticker) //test
+                      // process(currentBlockHeight + 1)         //test
                     }
                   }
                 }
@@ -352,11 +353,11 @@ object Indexer {
             nextBlock(blockHeight).map { response =>
               response match {
                 case true => {
-                  saveState(blockHash)
+                  saveState(blockHash, blockHeight)
                   process(blockHeight + 1, Some(blockNode))
                 }
                 case false => {
-                  saveState(blockHash, true)
+                  saveState(blockHash, blockHeight, true)
                   ApiLogs.debug("Blocks synchronized !")
                   Neo4jBatchInserter.stopService
                   launched = false
@@ -422,7 +423,7 @@ object Indexer {
             var (message, blockNode, blockHash) = q
             ApiLogs.debug(message) //Block added
 
-            saveState(blockHash)
+            saveState(blockHash, blockHeight)
 
             nextBlock(blockHeight).map { response =>
               response match {
