@@ -17,9 +17,8 @@ do
         else
                 echo "New block: $lastBlock. Notifying $serverIP:$serverPort..."
                 curl --silent "http://$serverIP:$serverPort/newblock/$lastBlock"
+		echo $lastBlock > previousBlock
                 sleep 60
         fi
-
-        echo $lastBlock > previousBlock
 done
 
