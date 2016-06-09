@@ -66,6 +66,16 @@ object RESTApi extends Controller {
     }
   }
 
+  def getBlocks(blocksHashes: String) = Action.async {
+    Neo4jEmbedded.getBlocks(blocksHashes).map { result =>
+      result match {
+        case Right(json) => Ok(json)
+        case Left(e) => BadRequest(e.toString)
+      }
+    }
+  }
+ 
+
   def getAddressesTransactions(addressesHashes: String, blockHash: Option[String]) = Action.async {
     Neo4jEmbedded.getAddressesTransactions(addressesHashes, blockHash).map { result =>
       result match {

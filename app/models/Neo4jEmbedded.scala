@@ -208,7 +208,32 @@ object Neo4jEmbedded {
 
   // }
 
-  private def getTransactionNode(txHash:String):(Node, Boolean) = {
+  private def getOrSetBlockNode(bHash:String):(Node, Boolean) = {
+    val graphDb = db.get
+
+    var optNode:Option[Node] = None
+
+    // Find Node:
+    val result:org.neo4j.graphdb.Result = graphDb.execute("MATCH (b:Block {hash: '"+bHash+"'}) RETURN b")
+    val nodes:ResourceIterator[Node] = result.columnAs( "b" )
+    if ( nodes.hasNext() ){
+      optNode = Some(nodes.next())
+    }
+
+    optNode match {
+      case Some(node) => (node, true)
+      case None => {
+        // If doesn't exist, create :
+        val blockNode:Node = graphDb.createNode( blockLabel.get )
+        blockNode.setProperty( "hash", bHash )
+        blockNode.setProperty("main_chain", true)
+
+        (blockNode, false)
+      }
+    }
+  }
+
+  private def getOrSetTransactionNode(txHash:String):(Node, Boolean) = {
     val graphDb = db.get
 
     var optNode:Option[Node] = None
@@ -232,7 +257,7 @@ object Neo4jEmbedded {
     }
   }
 
-  private def getAddressNode(address: String):Node = {
+  private def getOrSetAddressNode(address: String):Node = {
     val graphDb = db.get
 
     var optNode:Option[Node] = None
@@ -256,7 +281,7 @@ object Neo4jEmbedded {
     }
   }
 
-  def insert(rpcBlock:RPCBlock, blockReward: BigDecimal, uncles:ListBuffer[(RPCBlock, Integer, BigDecimal)] = ListBuffer()):Future[Either[Exception,(String, Long)]] = {
+  def insert(rpcBlock:RPCBlock, txsReceipt:List[RPCTransactionReceipt], blockReward: BigDecimal, uncles:ListBuffer[(RPCBlock, Integer, BigDecimal)] = ListBuffer()):Future[Either[Exception,(String, Long)]] = {
     Future {
 
       val graphDb = db.get
@@ -269,49 +294,71 @@ object Neo4jEmbedded {
         }
 
         // Block
-        val blockNode:Node = graphDb.createNode( blockLabel.get )
-        blockNode.setProperty( "hash", rpcBlock.hash )
-        blockNode.setProperty( "height", Converter.hexToInt(rpcBlock.number) )
-        blockNode.setProperty( "time", Converter.hexToInt(rpcBlock.timestamp) )
-        blockNode.setProperty( "reward", blockReward.bigDecimal.toPlainString )
-        blockNode.setProperty( "main_chain", true )
+        var (blockNode:Node, alreadyExist) = getOrSetBlockNode(rpcBlock.hash)
+        if(alreadyExist == false) {
+          blockNode.setProperty( "height", Converter.hexToInt(rpcBlock.number) )
+          blockNode.setProperty( "time", Converter.hexToInt(rpcBlock.timestamp) )
+          blockNode.setProperty( "reward", blockReward.bigDecimal.toPlainString )
+        }
 
         // Parent Block relationship
         rpcBlock.parentHash match {
           case None => /* nothing */
           case Some(prevBlock) => {
-            val prevBlockNode:Node = graphDb.findNode( blockLabel.get, "hash", prevBlock )
-            blockNode.createRelationshipTo( prevBlockNode, follows )
+            blockNode.getSingleRelationship( follows , Direction.OUTGOING ) match {
+              case r:Relationship => /*Nothing*/
+              case null => {
+                val prevBlockNode:Node = graphDb.findNode( blockLabel.get, "hash", prevBlock )
+                blockNode.createRelationshipTo( prevBlockNode, follows )
+              }
+            }
           }
         }
 
         // Block miner
-        var addressNode:Node = getAddressNode(rpcBlock.miner)
-        blockNode.createRelationshipTo( addressNode, minedby)
+        blockNode.getSingleRelationship( minedby , Direction.OUTGOING ) match {
+          case r:Relationship => /*Nothing*/
+          case null => {
+            var addressNode:Node = getOrSetAddressNode(rpcBlock.miner)
+            blockNode.createRelationshipTo( addressNode, minedby)
+          }
+        }        
 
         // Uncles
         for(uncle <- uncles){
           val (u, u_index, u_reward) = uncle
 
-          val uncleNode:Node = graphDb.createNode( blockLabel.get )
-          uncleNode.setProperty( "hash", u.hash )
-          uncleNode.setProperty( "height", Converter.hexToInt(u.number) )
-          uncleNode.setProperty( "time", Converter.hexToInt(u.timestamp) )
-          uncleNode.setProperty( "uncle_index", u_index )
+          var (uncleNode:Node, alreadyExist) = getOrSetBlockNode(u.hash)
+          if(alreadyExist == false) {
+            uncleNode.setProperty( "height", Converter.hexToInt(u.number) )
+            uncleNode.setProperty( "time", Converter.hexToInt(u.timestamp) )
+            uncleNode.setProperty( "main_chain", true )
+          }
           uncleNode.setProperty( "reward", u_reward.bigDecimal.toPlainString )
-          uncleNode.setProperty( "main_chain", true )
-          uncleNode.createRelationshipTo( blockNode, uncleof)
-
-          var addressNode:Node = getAddressNode(u.miner)
-          uncleNode.createRelationshipTo( addressNode, minedby)
+          uncleNode.setProperty( "uncle_index", u_index )
           
+          uncleNode.getSingleRelationship( uncleof , Direction.OUTGOING ) match {
+            case r:Relationship => /*Nothing*/
+            case null => {
+              uncleNode.createRelationshipTo( blockNode, uncleof)
+            }
+          }
+          
+          uncleNode.getSingleRelationship( minedby , Direction.OUTGOING ) match {
+            case r:Relationship => /*Nothing*/
+            case null => {
+              var addressNode:Node = getOrSetAddressNode(u.miner)
+              uncleNode.createRelationshipTo( addressNode, minedby)
+            }
+          }          
         }
         
 
         // Transactions
-        for(rpcTransaction <- rpcBlock.transactions.get){
+        for((rpcTransaction, i) <- rpcBlock.transactions.get.zipWithIndex){
+          val txReceipt = txsReceipt(i)
 
-          var (txNode:Node, alreadyExist) = getTransactionNode(rpcTransaction.hash)
+          var (txNode:Node, alreadyExist) = getOrSetTransactionNode(rpcTransaction.hash)
 
           if(alreadyExist == false) {
             txNode.setProperty( "index", Converter.hexToInt(rpcTransaction.transactionIndex) )
@@ -319,23 +366,45 @@ object Neo4jEmbedded {
             txNode.setProperty( "value", Converter.hexToBigDecimal(rpcTransaction.value).bigDecimal.toPlainString )
             txNode.setProperty( "gas", Converter.hexToBigDecimal(rpcTransaction.gas).bigDecimal.toPlainString )
             txNode.setProperty( "gas_price", Converter.hexToBigDecimal(rpcTransaction.gasPrice).bigDecimal.toPlainString )
+
             txNode.setProperty( "received_at", Converter.hexToInt(rpcBlock.timestamp) )
             txNode.setProperty( "input", rpcTransaction.input )
 
-            var fromNode:Node = getAddressNode(rpcTransaction.from)
+            var fromNode:Node = getOrSetAddressNode(rpcTransaction.from)
             txNode.createRelationshipTo( fromNode, issentfrom)
-
-            rpcTransaction.to match {
-              case Some(to) => {
-                var toNode:Node = getAddressNode(to)
-                txNode.createRelationshipTo( toNode, issentto)
-              }
-              case None => /* nothing */
-            }
           }
 
-          blockNode.createRelationshipTo( txNode, contains )
-          
+          txNode.setProperty( "cumulative_gas_used", Converter.hexToBigDecimal(txReceipt.cumulativeGasUsed).bigDecimal.toPlainString )
+          txNode.setProperty( "gas_used", Converter.hexToBigDecimal(txReceipt.gasUsed).bigDecimal.toPlainString )
+
+          txNode.getSingleRelationship( issentto , Direction.OUTGOING ) match {
+            case r:Relationship => /*Nothing*/
+            case null => {
+              rpcTransaction.to match {
+                case Some(to) => {
+                  var toNode:Node = getOrSetAddressNode(to)
+                  txNode.createRelationshipTo( toNode, issentto)
+                }
+                case None => {
+                  txReceipt.contractAddress match {
+                    case Some(to) => {
+                      var toNode:Node = getOrSetAddressNode(to)
+                      txNode.createRelationshipTo( toNode, issentto)
+                    }
+                    case None => /* */
+                  }
+                }
+              }
+            }
+          }   
+
+
+          txNode.getSingleRelationship( contains , Direction.INCOMING ) match {
+            case r:Relationship => /*Nothing*/
+            case null => {
+              blockNode.createRelationshipTo( txNode, contains )
+            }
+          }          
         }
 
         tx.success()
@@ -371,9 +440,9 @@ object Neo4jEmbedded {
         
 
         // Transactions
-        for(rpcTransaction <- transactions){
+        for((rpcTransaction, i) <- transactions.zipWithIndex){
 
-          var (txNode:Node, alreadyExist) = getTransactionNode(rpcTransaction.hash)
+          var (txNode:Node, alreadyExist) = getOrSetTransactionNode(rpcTransaction.hash)
 
           if(alreadyExist == false) {
 
@@ -384,18 +453,24 @@ object Neo4jEmbedded {
             txNode.setProperty( "value", Converter.hexToBigDecimal(rpcTransaction.value).bigDecimal.toPlainString )
             txNode.setProperty( "gas", Converter.hexToBigDecimal(rpcTransaction.gas).bigDecimal.toPlainString )
             txNode.setProperty( "gas_price", Converter.hexToBigDecimal(rpcTransaction.gasPrice).bigDecimal.toPlainString )
+
+            // txNode.setProperty( "cumulative_gas_used", null )
+            // txNode.setProperty( "gas_used", null )
+
             txNode.setProperty( "received_at", timestamp )
             txNode.setProperty( "input", rpcTransaction.input )
 
-            var fromNode:Node = getAddressNode(rpcTransaction.from)
+            var fromNode:Node = getOrSetAddressNode(rpcTransaction.from)
             txNode.createRelationshipTo( fromNode, issentfrom)
 
             rpcTransaction.to match {
               case Some(to) => {
-                var toNode:Node = getAddressNode(to)
+                var toNode:Node = getOrSetAddressNode(to)
                 txNode.createRelationshipTo( toNode, issentto)
               }
-              case None => /* nothing */
+              case None => {
+                /* */
+              }
             }
 
             txsAdded += rpcTransaction.hash
@@ -605,7 +680,7 @@ object Neo4jEmbedded {
   private def getTransaction(txNode:Node):Either[Exception, JsValue] = {
 
     //Block
-    var block:JsValue = txNode.getSingleRelationship( contains , Direction.INCOMING ) match {
+    val block:JsValue = txNode.getSingleRelationship( contains , Direction.INCOMING ) match {
       case r:Relationship => {
         val blockNode:Node = r.getStartNode()
         Json.obj(
@@ -621,12 +696,22 @@ object Neo4jEmbedded {
     val fromNode:Node = txNode.getSingleRelationship( issentfrom , Direction.OUTGOING ).getEndNode()
 
     //To
-    var to:JsValue = txNode.getSingleRelationship( issentto , Direction.OUTGOING ) match {
+    val to:JsValue = txNode.getSingleRelationship( issentto , Direction.OUTGOING ) match {
       case r:Relationship => {
         val toNode:Node = r.getEndNode()
         JsString(toNode.getProperty("value").toString)
       }
       case null => JsNull
+    }
+
+    val cumulativeGasUsed:JsValue = txNode.hasProperty("cumulative_gas_used") match {
+      case true => JsNumber(Converter.stringToBigDecimal(txNode.getProperty("cumulative_gas_used").toString))
+      case false => JsNull
+    }
+
+    val gasUsed:JsValue = txNode.hasProperty("gas_used") match {
+      case true => JsNumber(Converter.stringToBigDecimal(txNode.getProperty("gas_used").toString))
+      case false => JsNull
     }
 
     //Result
@@ -637,6 +722,8 @@ object Neo4jEmbedded {
       "value" -> Converter.stringToBigDecimal(txNode.getProperty("value").toString),
       "gas" -> Converter.stringToBigDecimal(txNode.getProperty("gas").toString),
       "gas_price" -> Converter.stringToBigDecimal(txNode.getProperty("gas_price").toString),
+      "cumulative_gas_used" -> cumulativeGasUsed,
+      "gas_used" -> gasUsed,
       "from" -> fromNode.getProperty("value").toString,
       "to" -> to,
       "input" -> txNode.getProperty("input").toString,
@@ -644,7 +731,8 @@ object Neo4jEmbedded {
       "block" -> block
     )
 
-
+     // txNode.setProperty( "cumulative_gas_used", null )
+            // txNode.setProperty( "gas_used", null )
 
     Right(result)
   }

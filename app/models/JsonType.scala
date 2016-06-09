@@ -45,3 +45,17 @@ case class RPCTransaction(
   gasPrice: String,
   input: String
 )
+
+case class RPCTransactionReceipt(
+  blockHash: String,
+  blockNumber: String,
+  contractAddress: Option[String],
+  cumulativeGasUsed: String,
+  from: String,
+  gasUsed: String,
+  //logs: [0]
+  root: String,
+  to: Option[String],
+  transactionHash: String,
+  transactionIndex: String
+)

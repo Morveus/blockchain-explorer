@@ -40,6 +40,9 @@ object Neo4jBlockchainIndexer {
   implicit val blockWrites        = Json.writes[RPCBlock]
   implicit val pendingBlockReads         = Json.reads[RPCPendingBlock]
   implicit val pendingBlockWrites        = Json.writes[RPCPendingBlock]
+
+  implicit val transactionReceiptReads         = Json.reads[RPCTransactionReceipt]
+  implicit val transactionReceiptWrites        = Json.writes[RPCTransactionReceipt]
   
 
  
@@ -60,40 +63,52 @@ object Neo4jBlockchainIndexer {
           // On calcule le reward du mineur :
           val blockReward:BigDecimal = getBlockReward(rpcBlock)
 
-          if(resultsFuts.size > 0) {
-            val futuresResponses: Future[ListBuffer[Either[Exception,(RPCBlock, Integer)]]] = Future.sequence(resultsFuts)
-            futuresResponses.flatMap { responses =>
-
-              var exception:Option[Exception] = None
-              var uncles:ListBuffer[(RPCBlock, Integer, BigDecimal)] = ListBuffer[(RPCBlock, Integer, BigDecimal)]()
-              for(response <- responses){
-                response match {
-                  case Left(e) => {
-                    exception = Some(e)
-                  }
-                  case Right((rpcUncle, u_index)) => {
-
-                    //val uncle:NeoBlock = NeoBlock(rpcUncle.hash, rpcUncle.height, rpcUncle.time, Some(u_index))
-                    val uncleReward:BigDecimal = getUncleReward(rpcBlock, rpcUncle)
-
-                    uncles += ((rpcUncle, u_index, uncleReward))
-                  }
-                }
-              }
-
-              exception match {
-                case Some(e) => {
-                  Future(Left(e))
-                }
-                case None => {
-                  indexFullBlock(mode, rpcBlock, prevBlockNode, blockReward, uncles)
-                }
-              }
-            }
-          }else{
-            indexFullBlock(mode, rpcBlock, prevBlockNode, blockReward)
+          // Récupères les transactionReceipt :
+          var txHashes:ListBuffer[String] = ListBuffer()
+          for(tx <- rpcBlock.transactions.get){
+            txHashes += tx.hash
           }
+          
+          getTransactionReceipt(ticker, txHashes.toList).flatMap { result =>
+            result match {
+              case Right(txsReceipt) => {
+                if(resultsFuts.size > 0) {
+                  val futuresResponses: Future[ListBuffer[Either[Exception,(RPCBlock, Integer)]]] = Future.sequence(resultsFuts)
+                  futuresResponses.flatMap { responses =>
 
+                    var exception:Option[Exception] = None
+                    var uncles:ListBuffer[(RPCBlock, Integer, BigDecimal)] = ListBuffer[(RPCBlock, Integer, BigDecimal)]()
+                    for(response <- responses){
+                      response match {
+                        case Left(e) => {
+                          exception = Some(e)
+                        }
+                        case Right((rpcUncle, u_index)) => {
+
+                          //val uncle:NeoBlock = NeoBlock(rpcUncle.hash, rpcUncle.height, rpcUncle.time, Some(u_index))
+                          val uncleReward:BigDecimal = getUncleReward(rpcBlock, rpcUncle)
+
+                          uncles += ((rpcUncle, u_index, uncleReward))
+                        }
+                      }
+                    }
+
+                    exception match {
+                      case Some(e) => {
+                        Future(Left(e))
+                      }
+                      case None => {
+                        indexFullBlock(mode, rpcBlock, prevBlockNode, txsReceipt, blockReward, uncles)
+                      }
+                    }
+                  }
+                }else{
+                  indexFullBlock(mode, rpcBlock, prevBlockNode, txsReceipt, blockReward)
+                }
+              }
+              case Left(e) => Future(Left(e))
+            }
+          }
         }
       }
     }
@@ -210,6 +225,24 @@ object Neo4jBlockchainIndexer {
     }
   }
 
+  private def getTransactionReceipt(ticker:String, txHashes:List[String]):Future[Either[Exception,List[RPCTransactionReceipt]]] = {
+    if(txHashes.size == 0){
+      Future(Right(List[RPCTransactionReceipt]()))
+    }else{
+      blockchainsList(ticker).getTransactionReceipt(ticker, txHashes).map { response =>
+        response.validate[List[RPCTransactionReceipt]] match {
+          case l: JsSuccess[List[RPCTransactionReceipt]] => {
+            Right(l.get)
+          }
+          case e: JsError => {
+            ApiLogs.error("Invalid transactionsReceipts from RPC ("+e.toString+") : "+response)
+            Left(new Exception("Invalid transactionsReceipts from RPC ("+e.toString+") : "+response))
+          }
+        }
+      }
+    }
+  }
+
   private def getUncle(ticker:String, blockHash:String, uncleIndex: Int):Future[Either[Exception,(RPCBlock, Integer)]] = {
     blockchainsList(ticker).getUncle(ticker, blockHash, uncleIndex).map { response =>
       (response \ "result") match {
@@ -250,11 +283,11 @@ object Neo4jBlockchainIndexer {
     uncleReward
   }
 
-  private def indexFullBlock(mode:String, rpcBlock:RPCBlock, prevBlockNode:Option[Long], blockReward:BigDecimal, uncles:ListBuffer[(RPCBlock, Integer, BigDecimal)] = ListBuffer()):Future[Either[Exception,(String, Long, String)]] = {
+  private def indexFullBlock(mode:String, rpcBlock:RPCBlock, prevBlockNode:Option[Long], txsReceipt:List[RPCTransactionReceipt], blockReward:BigDecimal, uncles:ListBuffer[(RPCBlock, Integer, BigDecimal)] = ListBuffer()):Future[Either[Exception,(String, Long, String)]] = {
 
     var method = mode match {
-      case "batch" => Neo4jBatchInserter.batchInsert(rpcBlock, prevBlockNode, blockReward, uncles)
-      case _ => Neo4jEmbedded.insert(rpcBlock, blockReward, uncles)
+      case "batch" => Neo4jBatchInserter.batchInsert(rpcBlock, prevBlockNode, txsReceipt, blockReward, uncles)
+      case _ => Neo4jEmbedded.insert(rpcBlock, txsReceipt, blockReward, uncles)
     }
 
     method.map { result =>

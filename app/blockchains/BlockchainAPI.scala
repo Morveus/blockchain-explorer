@@ -17,4 +17,6 @@ trait BlockchainAPI {
     def pushTransaction(ticker: String, hex: String): Future[(Int, String)]
 
     def getMempool(ticker: String): Future[JsValue]
+
+    def getTransactionReceipt(ticker: String, txHashes: List[String]): Future[JsValue]
 }

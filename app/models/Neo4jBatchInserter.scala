@@ -156,7 +156,7 @@ object Neo4jBatchInserter {
 	}
 
 
-	def batchInsert(rpcBlock:RPCBlock, prevBlockNode:Option[Long], blockReward:BigDecimal, uncles:ListBuffer[(RPCBlock, Integer, BigDecimal)] = ListBuffer()):Future[Either[Exception,(String, Long)]] = {
+	def batchInsert(rpcBlock:RPCBlock, prevBlockNode:Option[Long], txsReceipt:List[RPCTransactionReceipt], blockReward:BigDecimal, uncles:ListBuffer[(RPCBlock, Integer, BigDecimal)] = ListBuffer()):Future[Either[Exception,(String, Long)]] = {
 		Future {
 			try {
 				if(isShutdowning){
@@ -202,7 +202,10 @@ object Neo4jBatchInserter {
 				}
 
 				// Transactions
-				for(tx <- rpcBlock.transactions.get){
+				for((tx, i) <- rpcBlock.transactions.get.zipWithIndex){
+
+					val txReceipt = txsReceipt(i)
+
 					properties = new java.util.HashMap()
 					properties.put( "hash", tx.hash )
 					properties.put( "index", Converter.hexToInt(tx.transactionIndex).asInstanceOf[AnyRef] )
@@ -210,6 +213,10 @@ object Neo4jBatchInserter {
 					properties.put( "value", Converter.hexToBigDecimal(tx.value).bigDecimal.toPlainString )
 					properties.put( "gas", Converter.hexToBigDecimal(tx.gas).bigDecimal.toPlainString )
 					properties.put( "gas_price", Converter.hexToBigDecimal(tx.gasPrice).bigDecimal.toPlainString )
+
+					properties.put( "cumulative_gas_used", Converter.hexToBigDecimal(txReceipt.cumulativeGasUsed).bigDecimal.toPlainString )
+					properties.put( "gas_used", Converter.hexToBigDecimal(txReceipt.gasUsed).bigDecimal.toPlainString )
+
 					properties.put( "received_at", Converter.hexToInt(rpcBlock.timestamp).asInstanceOf[AnyRef] )
 					properties.put( "input", tx.input.asInstanceOf[AnyRef] )
 					var txNode:Long = batchInserter.get.createNode( properties, transactionLabel.get )
@@ -220,10 +227,15 @@ object Neo4jBatchInserter {
 				    	case Some(to) => {
 				    		var toNode:Long = getAddressNode(to)
 				    		batchInserter.get.createRelationship( txNode, toNode, issentto, null )
-
 				    	}
 				    	case None => {
-				    		/* */
+				    		txReceipt.contractAddress match {
+				    			case Some(to) => {
+				    				var toNode:Long = getAddressNode(to)
+				    				batchInserter.get.createRelationship( txNode, toNode, issentto, null )
+				    			}
+				    			case None => /* */
+				    		}
 				    	}
 				    }
 				}

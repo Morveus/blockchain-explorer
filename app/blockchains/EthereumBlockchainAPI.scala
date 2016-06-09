@@ -6,6 +6,7 @@ import play.api.mvc._
 import play.api.libs.ws._
 import play.api.libs.json._
 
+import scala.collection.mutable.ListBuffer
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
 import scala.util.Random
@@ -108,6 +109,25 @@ object EthereumBlockchainAPI extends BlockchainAPI {
 
     WS.url(url).withAuth(user, pass, WSAuthScheme.BASIC).post(rpcRequest).map { response =>
       Json.parse(response.body)
+    }
+  }
+
+  def getTransactionReceipt(ticker: String, txHashes:List[String]): Future[JsValue] = {
+    
+    val rpcRequest = ListBuffer[JsValue]()
+    for(txHash <- txHashes){
+      val rpcRequestId = Random.nextInt(10000000)
+      rpcRequest += Json.obj("jsonrpc" -> "2.0",
+                              "method" -> "eth_getTransactionReceipt",
+                              "id" -> rpcRequestId,
+                              "params" -> Json.arr(txHash))
+    }
+    
+
+    val (url, user, pass) = this.connectionParameters(ticker)
+
+    WS.url(url).withAuth(user, pass, WSAuthScheme.BASIC).post(Json.toJson(rpcRequest)).map { response =>
+      Json.toJson((Json.parse(response.body) \\ "result").toList)
     }
   }
 }

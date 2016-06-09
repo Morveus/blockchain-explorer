@@ -36,12 +36,15 @@ object Indexer {
   val webSocketActor = Akka.system.actorSelection("user/blockchain-explorer")
 
   var isSaving = false
-  def saveState(blockHash:String) = {
+  def saveState(blockHash:String, setStandardMod:Boolean = false) = {
     currentBlockHash = blockHash
     Future {
       if(isSaving == false){
         isSaving = true
         indexer = indexer.withValue("currentblock", ConfigValueFactory.fromAnyRef(blockHash))
+        if(setStandardMod == true){
+          indexer = indexer.withValue("batchmod", ConfigValueFactory.fromAnyRef(false))
+        }
 
         val renderOpts = ConfigRenderOptions.defaults().setOriginComments(false).setComments(false).setJson(false);
         //println(indexer.root().render(renderOpts))
@@ -54,7 +57,6 @@ object Indexer {
         isSaving = false
       }
     }
-
   }
 
   def start() = {
@@ -217,6 +219,7 @@ object Indexer {
               case Right(s) => {
                 var (message, transactions) = s
                 for(transaction <- transactions){
+                  ApiLogs.debug("mempool tx: "+transaction)
                   pushNotification("new-transaction", transaction)
                 }
                 if(transactions.size > 0){
@@ -313,7 +316,11 @@ object Indexer {
                       Neo4jBatchInserter.startService(ticker)
                       process(currentBlockHeight + 1, Some(nodeId))
                     }
-                    case None => ApiLogs.error("Indexer Exception : previous node not found !")
+                    case None => {
+                      ApiLogs.error("Indexer Exception : previous node not found !")
+                      //Neo4jBatchInserter.startService(ticker) //test
+                      //process(currentBlockHeight + 1)         //test
+                    }
                   }
                 }
                 case Left(e) => {
@@ -340,12 +347,16 @@ object Indexer {
             var (message, blockNode, blockHash) = q
             ApiLogs.debug(message) //Block added
 
-            saveState(blockHash)
+            
 
             nextBlock(blockHeight).map { response =>
               response match {
-                case true =>  process(blockHeight + 1, Some(blockNode))
+                case true => {
+                  saveState(blockHash)
+                  process(blockHeight + 1, Some(blockNode))
+                }
                 case false => {
+                  saveState(blockHash, true)
                   ApiLogs.debug("Blocks synchronized !")
                   Neo4jBatchInserter.stopService
                   launched = false
@@ -394,6 +405,7 @@ object Indexer {
               case true =>  process(currentBlockHeight + 1)
               case false => {
                 ApiLogs.debug("Blocks synchronized !")
+                mempool()
                 launched = false
               }
             }
@@ -417,7 +429,6 @@ object Indexer {
                 case true =>  process(blockHeight + 1)
                 case false => {
                   ApiLogs.debug("Blocks synchronized !")
-
                   mempool()
                   launched = false
                 }
