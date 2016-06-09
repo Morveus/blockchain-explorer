@@ -400,7 +400,22 @@ object Neo4jEmbedded {
 
 
           txNode.getSingleRelationship( contains , Direction.INCOMING ) match {
-            case r:Relationship => /*Nothing*/
+            case r:Relationship => {
+              // Si la tx est liée à un block main_chain = false, on la désassocie:
+              val txBlockNode = r.getStartNode()
+              txBlockNode.getProperty("main_chain").asInstanceOf[Boolean] match {
+                case true => {
+                  if(txBlockNode.getProperty("hash") != blockNode.getProperty("hash")){
+                    ApiLogs.error("tx déjà associée à au bloc '"+txBlockNode.getProperty("hash")+"' !")                  
+                  }
+                }
+                case false => {
+                  ApiLogs.debug("Suppression de la liaison tx '"+txNode.getProperty("hash")+"' / uncle '"+txBlockNode.getProperty("hash")+"'")
+                  r.delete()
+                  blockNode.createRelationshipTo( txNode, contains )
+                }
+              }
+            }
             case null => {
               blockNode.createRelationshipTo( txNode, contains )
             }

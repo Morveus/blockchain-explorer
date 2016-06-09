@@ -142,6 +142,7 @@ object Indexer {
                       if(resultsFuts.size > 0) {
                         val futuresResponses: Future[ListBuffer[Unit]] = Future.sequence(resultsFuts)
                         futuresResponses.map { result =>
+                          ApiLogs.warn("new-reorg")
                           pushNotification("new-reorg")
                         }
                       }     
