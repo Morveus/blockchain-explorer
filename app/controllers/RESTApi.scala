@@ -58,77 +58,112 @@ object RESTApi extends Controller {
 
   
   def getCurrentBlock = Action.async {
-    val currentBlockHash = Indexer.currentBlockHash
-    Neo4jEmbedded.getBlocks(currentBlockHash).map { result =>
-      result match {
-        case Right(json) => {
-          json.as[JsArray].value.size match {
-            case 1 => Ok(json(0))
-            case _ => InternalServerError
+    Indexer.launched match {
+      case false => {
+        val currentBlockHash = Indexer.currentBlockHash
+        Neo4jEmbedded.getBlocks(currentBlockHash).map { result =>
+          result match {
+            case Right(json) => {
+              json.as[JsArray].value.size match {
+                case 1 => Ok(json(0))
+                case _ => InternalServerError
+              }
+            } 
+            case Left(e) => BadRequest(e.toString)
           }
-        } 
-        case Left(e) => BadRequest(e.toString)
+        }
+      }
+      case true => {
+        Future(ServiceUnavailable(""))
       }
     }
   }
 
   def getBlocks(blocksHashes: String) = Action.async {
-    Neo4jEmbedded.getBlocks(blocksHashes).map { result =>
-      result match {
-        case Right(json) => Ok(json)
-        case Left(e) => BadRequest(e.toString)
+    Indexer.launched match {
+      case false => {
+        Neo4jEmbedded.getBlocks(blocksHashes).map { result =>
+          result match {
+            case Right(json) => Ok(json)
+            case Left(e) => BadRequest(e.toString)
+          }
+        }
+      }
+      case true => {
+        Future(ServiceUnavailable(""))
       }
     }
   } 
 
   def getAddressesTransactions(addressesHashes: String, blockHash: Option[String]) = Action.async {
-    Neo4jEmbedded.getAddressesTransactions(addressesHashes, blockHash).map { result =>
-      result match {
-        case Right(json) => Ok(json)
-        case Left(e) => BadRequest(e.toString)
+    Indexer.launched match {
+      case false => {
+        Neo4jEmbedded.getAddressesTransactions(addressesHashes, blockHash).map { result =>
+          result match {
+            case Right(json) => Ok(json)
+            case Left(e) => BadRequest(e.toString)
+          }
+        }
+      }
+      case true => {
+        Future(ServiceUnavailable(""))
       }
     }
   }
 
   def getTransactions(txsHashes: String) = Action.async {
-    Neo4jEmbedded.getTransactions(txsHashes).map { result =>
-      result match {
-        case Right(json) => Ok(json)
-        case Left(e) => BadRequest(e.toString)
+    Indexer.launched match {
+      case false => {
+        Neo4jEmbedded.getTransactions(txsHashes).map { result =>
+          result match {
+            case Right(json) => Ok(json)
+            case Left(e) => BadRequest(e.toString)
+          }
+        }
+      }
+      case true => {
+        Future(ServiceUnavailable(""))
       }
     }
   }
 
   def sendTransaction = Action.async { implicit request =>
-    var txHex = ""
-    var error: Option[String] = None
+    Indexer.launched match {
+      case false => {
+        var txHex = ""
+        var error: Option[String] = None
 
-    request.body.asJson.map { json =>
-      (json \ "tx").asOpt[String].map { tx =>
-        ApiLogs.debug("Pushtx JSON: " + tx)
-        txHex = tx
-      }.getOrElse {
-        error = Some("Missing parameter [tx]")
-      }
-    }.getOrElse {
-      error = Some("Expecting Json data")
-    }
+        request.body.asJson.map { json =>
+          (json \ "tx").asOpt[String].map { tx =>
+            ApiLogs.debug("Pushtx JSON: " + tx)
+            txHex = tx
+          }.getOrElse {
+            error = Some("Missing parameter [tx]")
+          }
+        }.getOrElse {
+          error = Some("Expecting Json data")
+        }
 
-    error match {
-      case Some(msg) => {
-        ApiLogs.debug("PushTX Error: "+msg)
-        Future(BadRequest(Json.obj("error" -> msg)))
-      }
-      case None => {
-        blockchainsList(ticker).pushTransaction(ticker, txHex).map { res =>
-          val (status, message) = res
-          status match {
-            case 200 => Ok(message)
-            case _ => {
-              Status(status)(Json.parse(message))
+        error match {
+          case Some(msg) => {
+            ApiLogs.debug("PushTX Error: "+msg)
+            Future(BadRequest(Json.obj("error" -> msg)))
+          }
+          case None => {
+            blockchainsList(ticker).pushTransaction(ticker, txHex).map { res =>
+              val (status, message) = res
+              status match {
+                case 200 => Ok(message)
+                case _ => {
+                  Status(status)(Json.parse(message))
+                }
+              }
             }
           }
         }
+      }
+      case true => {
+        Future(ServiceUnavailable(""))
       }
     }
   }

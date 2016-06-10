@@ -310,15 +310,26 @@ object Indexer {
 
             Neo4jEmbedded.startService
             Neo4jEmbedded.getBlockNode(currentBlockHash).map { result =>
-              Neo4jEmbedded.stopService
               result match {
                 case Right(optNode) => {
                   optNode match {
                     case Some(nodeId) => {
-                      Neo4jBatchInserter.startService(ticker)
-                      process(currentBlockHeight + 1, Some(nodeId))
+                      //On delete les données qui auraient pu commencer à être insérées à la suite de ce block:
+                      Neo4jEmbedded.deleteNextBlocks(currentBlockHeight).map { result =>
+                        result match {
+                          case Left(e) => ApiLogs.error("Indexer.startBatchMod Exception : "+e.toString)
+                          case Right(s) => {
+                            ApiLogs.debug(s)
+                            Neo4jEmbedded.stopService
+
+                            Neo4jBatchInserter.startService(ticker)
+                            process(currentBlockHeight + 1, Some(nodeId))
+                          }
+                        }
+                      }
                     }
                     case None => {
+                      Neo4jEmbedded.stopService
                       ApiLogs.error("Indexer Exception : previous node not found !")
                       // Neo4jBatchInserter.startService(ticker) //test
                       // process(currentBlockHeight + 1)         //test

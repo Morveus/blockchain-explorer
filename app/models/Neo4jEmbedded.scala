@@ -122,6 +122,107 @@ object Neo4jEmbedded {
     }
   }
 
+  def deleteNextBlocks(height:Long):Future[Either[Exception,String]] = {
+    Future {
+
+      val graphDb = db.get
+      var tx:Transaction = graphDb.beginTx()
+
+      try {
+
+        if(isShutdowning){
+          throw new Exception("shutdown...")
+        }
+
+        val query = """
+          MATCH (b:Block)
+          WHERE b.height > {height}
+          AND NOT EXISTS(b.uncle_index)
+          RETURN b
+          ORDER BY b.height DESC
+        """
+        
+        var parameters:java.util.Map[String,Object] = new java.util.HashMap()
+        parameters.put( "height",  height.asInstanceOf[AnyRef])
+
+        val dbRes:org.neo4j.graphdb.Result = graphDb.execute(query, parameters)
+        val nodes:ResourceIterator[Node] = dbRes.columnAs( "b" )
+        while(nodes.hasNext()){
+          //Transaction
+          val blockNode:Node = nodes.next()
+          
+          println("block "+blockNode.getProperty("hash").toString)
+
+          //Suppression de la relation 'follows'
+          blockNode.getSingleRelationship(follows, Direction.OUTGOING) match {
+            case r:Relationship => r.delete()
+            case _ => /* */
+          }
+
+          //Suppression de la relation 'minedby'
+          blockNode.getSingleRelationship(minedby, Direction.OUTGOING) match {
+            case r:Relationship => r.delete()
+            case _ => /* */
+          }
+          
+
+          //Suppressions des uncles
+          val uncleRelationships = blockNode.getRelationships(uncleof, Direction.INCOMING)
+          for (r <- uncleRelationships) {
+            val uncleNode:Node = r.getStartNode()
+
+            println("uncle "+uncleNode.getProperty("hash").toString+" -- "+uncleNode.getId())
+
+            uncleNode.getSingleRelationship(follows, Direction.OUTGOING) match {
+              case r:Relationship => r.delete()
+              case _ => /* */
+            }
+
+            uncleNode.getSingleRelationship(minedby, Direction.OUTGOING) match {
+              case r:Relationship => r.delete()
+              case _ => /* */
+            }
+          
+            r.delete()
+            //uncleNode.delete()
+          }
+
+          //Suppression des txs
+          val txRelationships = blockNode.getRelationships(contains, Direction.OUTGOING)  //.iterator()
+          for (r <- txRelationships) {
+
+            val txNode:Node = r.getEndNode()
+
+            txNode.getSingleRelationship(issentfrom, Direction.OUTGOING) match {
+              case r:Relationship => r.delete()
+              case _ => /* */
+            }
+
+            txNode.getSingleRelationship(issentto, Direction.OUTGOING) match {
+              case r:Relationship => r.delete()
+              case _ => /* */
+            }
+
+            r.delete()
+            txNode.delete()
+          }
+          
+          blockNode.delete()
+        }
+        
+        tx.success()
+        Right("DB cleaned")
+
+      } catch {
+        case e:Exception => {
+          Left(e)
+        }
+      }
+      finally {
+        tx.close()
+      }
+    }
+  }
 
 
   def getBlockNode(hash:String):Future[Either[Exception, Option[Long]]] = {
@@ -131,8 +232,10 @@ object Neo4jEmbedded {
         val resultIterator:ResourceIterator[Long] = db.get.execute( query ).columnAs( "id" )
         if ( resultIterator.hasNext() ){
           val blockNode:Long = resultIterator.next()
+          resultIterator.close()
           Right(Some(blockNode))
         }else{
+          resultIterator.close()
           Right(None)
         }
       } catch {
@@ -155,6 +258,7 @@ object Neo4jEmbedded {
           val childNode:Node = childrenNode.next()
           response += childNode.getProperty( "hash" ).toString
         }
+        childrenNode.close()
         // for ( childNode <- Iterators.asIterable( childrenNode ) )
         // {
         //     response += childNode.getProperty( "hash" )
@@ -219,6 +323,7 @@ object Neo4jEmbedded {
     if ( nodes.hasNext() ){
       optNode = Some(nodes.next())
     }
+    nodes.close()
 
     optNode match {
       case Some(node) => (node, true)
@@ -244,6 +349,7 @@ object Neo4jEmbedded {
     if ( nodes.hasNext() ){
       optNode = Some(nodes.next())
     }
+    nodes.close()
 
     optNode match {
       case Some(node) => (node, true)
@@ -266,10 +372,11 @@ object Neo4jEmbedded {
     val result:org.neo4j.graphdb.Result = graphDb.execute("MATCH (a:Address {value: '"+address+"'}) RETURN a")
     val nodes:ResourceIterator[Node] = result.columnAs( "a" )
     if ( nodes.hasNext() ){
-          optNode = Some(nodes.next())
-      }
+      optNode = Some(nodes.next())
+    }
+    nodes.close()
 
-      optNode match {
+    optNode match {
       case Some(node) => node
       case None => {
         // If doesn't exist, create :
@@ -525,6 +632,7 @@ object Neo4jEmbedded {
           //Block
           val blockNode:Node = nodes.next()
 
+          nodes.close()
 
           getBlock(blockNode) match {
             case Right(json) => {
@@ -536,6 +644,7 @@ object Neo4jEmbedded {
           }
           
         }else{
+          nodes.close()
           Left(new Exception("TODO"))
         }
       } catch {
@@ -582,7 +691,7 @@ object Neo4jEmbedded {
             }
           }
         }
-
+        nodes.close()
         Right(Json.toJson(result))
       } catch {
         case e:Exception => {
@@ -649,6 +758,7 @@ object Neo4jEmbedded {
             }
           }
         }
+        nodes.close()
 
         Right(Json.toJson(result))
 
@@ -795,6 +905,7 @@ object Neo4jEmbedded {
             }
           }
         }
+        nodes.close()
 
         Right(Json.toJson(result))
       } catch {
