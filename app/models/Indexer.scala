@@ -16,6 +16,8 @@ import play.api.libs.json._
 import com.typesafe.config._
 import java.io._
 
+import utils._
+
 object Indexer {
   val config = play.api.Play.configuration
 
@@ -23,7 +25,8 @@ object Indexer {
 
   var batchmod:Boolean = indexer.getBoolean("batchmod")
   var ticker:String = indexer.getString("ticker")
-  //var currentBlockHeight:Long = indexer.getLong("currentblock")
+  var currentBlockHeight:Long = 0
+  var latestBlockHeight:Long = 0
   var currentBlockHash:String = indexer.getString("currentblock")
 
   val genesisBlockHash:String = config.getString("coins."+ticker+".genesisBlock").get
@@ -33,12 +36,16 @@ object Indexer {
   val webSocketActor = Akka.system.actorSelection("user/blockchain-explorer")
 
   var isSaving = false
-  def saveState(blockHash:String) = {
+  def saveState(blockHash:String, blockHeight:Long, setStandardMod:Boolean = false) = {
     currentBlockHash = blockHash
+    currentBlockHeight = blockHeight
     Future {
       if(isSaving == false){
         isSaving = true
         indexer = indexer.withValue("currentblock", ConfigValueFactory.fromAnyRef(blockHash))
+        if(setStandardMod == true){
+          indexer = indexer.withValue("batchmod", ConfigValueFactory.fromAnyRef(false))
+        }
 
         val renderOpts = ConfigRenderOptions.defaults().setOriginComments(false).setComments(false).setJson(false);
         //println(indexer.root().render(renderOpts))
@@ -84,10 +91,8 @@ object Indexer {
                   if(resultsFuts.size > 0) {
                     val futuresResponses: Future[ListBuffer[Unit]] = Future.sequence(resultsFuts)
                     futuresResponses.map { result =>
-                      pushNotification("new-reorg")
                     }
                   }else{
-                    pushNotification("new-reorg")
                     Future(Unit)
                   }
                 }
@@ -118,9 +123,19 @@ object Indexer {
                 Neo4jEmbedded.getBlockChildren(blockHash).flatMap { result =>
                   result match {
                     case Right(children) => {
+                      var resultsFuts: ListBuffer[Future[Unit]] = ListBuffer()
                       for(child <- children){
-                        setNotMainchain(child)
+                        resultsFuts += setNotMainchain(child)
                       }
+
+                      if(resultsFuts.size > 0) {
+                        val futuresResponses: Future[ListBuffer[Unit]] = Future.sequence(resultsFuts)
+                        futuresResponses.map { result =>
+                          ApiLogs.warn("new-reorg")
+                          pushNotification("new-reorg")
+                        }
+                      }     
+
                       Future(Right("process notMainchain fini"))
                     }
                     case Left(e) => {
@@ -148,7 +163,7 @@ object Indexer {
                                 case Right(q) => {
                                   var (message, blockNode, blockHeight, nextBlockHash) = q
                                   ApiLogs.debug(message) //Block added
-                                  saveState(blockHash)
+                                  saveState(blockHash, blockHeight)
 
                                   pushNotification("new-block", blockHash).map { result =>
                                     Right(message)
@@ -183,6 +198,36 @@ object Indexer {
       }
 
     }
+  }
+
+  private def mempool():Future[Unit] = {
+    // Neo4jBlockchainIndexer.getMempool(ticker).map { result =>
+    //   result match {
+    //     case Right(transactions) => {
+    //       Neo4jBlockchainIndexer.processTransactions("standard", ticker, transactions).map { response =>
+    //         response match {
+    //           case Right(s) => {
+    //             var (message, transactions) = s
+    //             for(transaction <- transactions){
+    //               ApiLogs.debug("mempool tx: "+transaction)
+    //               pushNotification("new-transaction", transaction)
+    //             }
+    //             if(transactions.size > 0){
+    //               ApiLogs.debug(message)
+    //             }                
+    //           }
+    //           case Left(e) => ApiLogs.error("Indexer.mempool() Exception : " + e.toString)
+    //         }
+            
+    //         Thread.sleep(500)
+    //         if(!Neo4jEmbedded.isShutdowning){
+    //           mempool()
+    //         }
+    //       }
+    //     }
+    //     case Left(e) => ApiLogs.error("Indexer.mempool() Exception : " + e.toString)
+    //   }
+    // }
   }
 
   private def pushNotification(datatype:String, hash:String = "") = {
@@ -245,18 +290,32 @@ object Indexer {
               case Some(b) => {
                 Neo4jEmbedded.startService
                 Neo4jEmbedded.getBlockNode(currentBlockHash).map { result =>
-                  Neo4jEmbedded.stopService
                   result match {
                     case Right(optNode) => {
                       optNode match {
                         case Some(nodeId) => {
-                          Neo4jBatchInserter.startService(ticker)
-                          process(b, Some(nodeId))
+                          //On delete les données qui auraient pu commencer à être insérées à la suite de ce block:
+                          Neo4jEmbedded.deleteNextBlocks(currentBlockHeight).map { result =>
+                            result match {
+                              case Left(e) => ApiLogs.error("Indexer.startBatchMod Exception : "+e.toString)
+                              case Right(s) => {
+                                ApiLogs.debug(s)
+                                Neo4jEmbedded.stopService
+
+                                Neo4jBatchInserter.startService(ticker)
+                                process(b, Some(nodeId))
+                              }
+                            }
+                          }
                         }
-                        case None => ApiLogs.error("Indexer Exception : previous node not found !")
+                        case None => {
+                          Neo4jEmbedded.stopService
+                          ApiLogs.error("Indexer Exception : previous node not found !")
+                        }
                       }
                     }
                     case Left(e) => {
+                      Neo4jEmbedded.stopService
                       ApiLogs.error("Indexer Exception : "+e.toString)
                     }
                   }
@@ -281,13 +340,13 @@ object Indexer {
             var (message, blockNode, blockHeight, nextBlockHash) = q
             ApiLogs.debug(message) //Block added
 
-            saveState(blockHash)
-
             nextBlockHash match {
               case Some(next) => {
+                saveState(blockHash, blockHeight)
                 process(next, Some(blockNode))	                
               }
               case None => {
+                saveState(blockHash, blockHeight, true)
                 ApiLogs.debug("Blocks synchronized !")
                 Neo4jBatchInserter.stopService
                 launched = false
