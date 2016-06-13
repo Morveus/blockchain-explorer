@@ -792,11 +792,21 @@ object Neo4jEmbedded {
   }
 
   private def getBlock(blockNode:Node):Either[Exception, JsValue] = {
+    
+    var txsHashes:ListBuffer[String] = ListBuffer()
+
+    val txsRelationships = blockNode.getRelationships(contains, Direction.OUTGOING)
+    for (r <- txsRelationships) {
+      val txNode:Node = r.getEndNode()
+      txsHashes += txNode.getProperty("hash").toString
+    }
+
     //Result
     val result = Json.obj( 
       "hash" -> blockNode.getProperty("hash").toString,
       "height" -> blockNode.getProperty("height").toString.toLong,
-      "time" -> blockNode.getProperty("time").toString.toLong
+      "time" -> blockNode.getProperty("time").toString.toLong,
+      "txs" -> Json.toJson(txsHashes)
     )
 
     Right(result)
